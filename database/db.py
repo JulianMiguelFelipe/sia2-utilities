@@ -33,7 +33,7 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            username      TEXT    NOT NULL UNIQUE,
+            username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
             password_hash TEXT    NOT NULL,
             salt          TEXT    NOT NULL,
             created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -55,14 +55,17 @@ def init_db():
     # 3. SMS & Email log
     cur.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id   INTEGER NOT NULL,
-            type      TEXT    NOT NULL CHECK (type IN ('email', 'sms')),
-            recipient TEXT    NOT NULL,
-            subject   TEXT,                               -- emails only
-            body      TEXT    NOT NULL,
-            status    TEXT    NOT NULL CHECK (status IN ('sent', 'failed')),
-            sent_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            type       TEXT    NOT NULL CHECK (type IN ('email', 'sms')),
+            recipient  TEXT    NOT NULL,
+            subject    TEXT,                              -- emails only
+            body       TEXT    NOT NULL,
+            status     TEXT    NOT NULL
+                       CHECK (status IN ('queued', 'sent', 'delivered', 'failed')),
+            gateway_id TEXT,                              -- SMSGate message ID (SMS only)
+            error      TEXT,                              -- reason, if it failed
+            sent_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     """)
