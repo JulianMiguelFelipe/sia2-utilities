@@ -70,6 +70,42 @@ def init_db():
         )
     """)
 
+    # 3b. SMS replies received through SMSGate (for SMS CHAT)
+    #     external_key = SMSGate's id + sender + time, so the same text is never saved twice
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sms_inbox (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            phone        TEXT    NOT NULL,                -- sender, +639...
+            body         TEXT    NOT NULL,
+            received_at  TEXT    NOT NULL,                -- local time, YYYY-MM-DD HH:MM:SS
+            external_key TEXT    NOT NULL,
+            UNIQUE (user_id, external_key),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    # 3c. Names you give to phone numbers + when you last read each chat
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS contacts (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            phone        TEXT    NOT NULL,
+            name         TEXT,
+            last_read_at TEXT,
+            UNIQUE (user_id, phone),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    # 3d. App settings (for now: theme = 'dark' or 'light')
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     # 4. Fake Data Generator -- exactly 10 data fields
     cur.execute("""
         CREATE TABLE IF NOT EXISTS fake_records (

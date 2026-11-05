@@ -10,7 +10,8 @@ from PySide6.QtWidgets import QApplication
 from database.db import init_db
 from ui.dashboard import Dashboard
 from ui.login_window import LoginWindow
-from ui.styles import APP_STYLE
+from services.settings_service import get_setting
+from ui.theme import set_theme
 
 
 class App:
@@ -27,22 +28,29 @@ class App:
     def open_dashboard(self, user):
         self.dashboard = Dashboard(user)
         self.dashboard.logout_requested.connect(self.logout)
-        self.dashboard.show()
+        if self.login_window.isMaximized():      # keep the same window size
+            self.dashboard.showMaximized()
+        else:
+            self.dashboard.show()
         self.login_window.hide()
 
     def logout(self):
-        self.dashboard.clear_session()
+        was_maximized = self.dashboard.isMaximized()
+        self.dashboard.clear_session()      # wipe Email/SMS credentials from memory
         self.dashboard.close()
         self.dashboard.deleteLater()
         self.dashboard = None
         self.login_window.show_login()
-        self.login_window.show()
+        if was_maximized:
+            self.login_window.showMaximized()
+        else:
+            self.login_window.show()
 
 
 def main():
-    init_db()
+    init_db()                       # make sure the database and tables exist
     qt_app = QApplication(sys.argv)
-    qt_app.setStyleSheet(APP_STYLE)
+    set_theme(get_setting("theme", "dark"), save=False)   # open in the last mode used
     app = App()
     app.start()
     sys.exit(qt_app.exec())

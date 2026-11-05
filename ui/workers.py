@@ -12,7 +12,7 @@ on_done(result) and on_error(exception) are always called on the UI thread.
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
-_running = set()
+_running = set()          # keep tasks alive until their result is delivered
 
 
 class _Signals(QObject):
@@ -32,7 +32,7 @@ class _Runnable(QRunnable):
     def run(self):
         try:
             result = self.fn(*self.args)
-        except Exception as err:
+        except Exception as err:         # handed back to the UI to show
             self.signals.error.emit(err)
         else:
             self.signals.done.emit(result)
@@ -63,7 +63,7 @@ class _Task(QObject):
             if callback:
                 callback(value)
         except RuntimeError:
-            pass
+            pass                 # the page was closed (e.g. logged out) while working
         finally:
             _running.discard(self)
 

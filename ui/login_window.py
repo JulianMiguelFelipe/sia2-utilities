@@ -7,12 +7,13 @@ When login succeeds, the window emits `login_success` with the user's info.
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QStackedWidget,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
 from auth.auth import login_user, register_user
-from ui.widgets import ImageSlot, field_label, make_box, make_button, set_status
+from ui.scaling import ScalingWindow
+from ui.widgets import ClockLabel, ImageSlot, field_label, make_box, make_button, set_status
 
 FEATURES = [
     ("URL SHORTENER", "Turns a long link into a shorter link"),
@@ -25,7 +26,7 @@ def make_input(password=False):
     field = QLineEdit()
     field.setFixedHeight(30)
     if password:
-        field.setEchoMode(QLineEdit.Password)
+        field.setEchoMode(QLineEdit.Password)      # show dots instead of text
     return field
 
 
@@ -37,10 +38,12 @@ def set_message(label, text, success=False):
 # ---------- Top bar ----------
 
 def make_top_bar():
+    """JD UTILS in the middle, the date and time on the right."""
     bar = make_box()
-    layout = QHBoxLayout(bar)
-    layout.setContentsMargins(0, 4, 0, 4)
-    layout.addWidget(QLabel("JD UTILS", objectName="brand"), alignment=Qt.AlignCenter)
+    layout = QGridLayout(bar)
+    layout.setContentsMargins(12, 4, 12, 4)
+    layout.addWidget(QLabel("JD UTILS", objectName="brand"), 0, 0, alignment=Qt.AlignCenter)
+    layout.addWidget(ClockLabel(), 0, 0, alignment=Qt.AlignRight | Qt.AlignVCenter)
     return bar
 
 
@@ -122,7 +125,7 @@ class LoginForm(QWidget):
 # ---------- Register box ----------
 
 class RegisterForm(QWidget):
-    go_to_login = Signal(str)
+    go_to_login = Signal(str)     # carries a success message (or empty)
 
     def __init__(self):
         super().__init__()
@@ -134,8 +137,7 @@ class RegisterForm(QWidget):
         self.message = QLabel("", objectName="error")
         self.message.setWordWrap(True)
 
-        hint = QLabel("8+ characters, with a letter and a number", objectName="featureDesc")
-        hint.setStyleSheet("padding-left: 0px; color: #aaaaaa;")
+        hint = QLabel("8+ characters, with a letter and a number", objectName="hint")
 
         signup_btn = make_button("SIGN UP", "primary", width=150)
         signup_btn.clicked.connect(self.handle_register)
@@ -187,8 +189,27 @@ class RegisterForm(QWidget):
 
 # ---------- Whole window ----------
 
-class LoginWindow(QWidget):
+def make_info_card():
+    """Who made the app and what it is."""
+    box = make_box()
+    layout = QVBoxLayout(box)
+    layout.setContentsMargins(10, 8, 14, 12)
+    layout.setSpacing(4)
+    layout.addWidget(QLabel("JULIAN & DARWIN UTILITIES", objectName="boxTitleBordered"),
+                     alignment=Qt.AlignLeft)
+    layout.addSpacing(4)
+    about = QLabel("A python program made for our SIA 2 final term project. "
+                   "Built with Python, PySide6 and SQLite.",
+                   objectName="infoText")
+    about.setWordWrap(True)
+    layout.addWidget(about)
+    layout.addWidget(QLabel("ITL313-18 \u00b7 SIA 2 LAB \u00b7 FINAL TERM PROJECT", objectName="hint"))
+    return box
+
+
+class LoginWindow(ScalingWindow):
     login_success = Signal(dict)
+    BASE_SIZE = (900, 560)          # everything grows when the window is bigger
 
     def __init__(self):
         super().__init__()
@@ -196,8 +217,8 @@ class LoginWindow(QWidget):
         self.resize(900, 560)
         self.setMinimumSize(820, 520)
 
-
-        art = ImageSlot("login_art.png", min_width=245, min_height=200)
+        # Left column: info card + features box + art
+        art = ImageSlot("login_art.png", min_width=200, min_height=110)
         art.setFixedWidth(245)
         art_row = QHBoxLayout()
         art_row.addStretch(1)
@@ -205,10 +226,12 @@ class LoginWindow(QWidget):
         art_row.addStretch(1)
 
         left = QVBoxLayout()
-        left.setSpacing(16)
+        left.setSpacing(14)
+        left.addWidget(make_info_card())
         left.addWidget(make_features_box())
         left.addLayout(art_row, stretch=1)
 
+        # Right column: login / register (swappable)
         self.login_form = LoginForm()
         self.register_form = RegisterForm()
         self.stack = QStackedWidget()
@@ -228,7 +251,7 @@ class LoginWindow(QWidget):
         body.addLayout(left, stretch=1)
         body.addLayout(right)
 
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self.content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(make_top_bar())
@@ -237,6 +260,7 @@ class LoginWindow(QWidget):
         self.login_form.go_to_register.connect(self.show_register)
         self.register_form.go_to_login.connect(self.show_login)
         self.login_form.login_success.connect(self.login_success.emit)
+        self.finish_scaling()
 
     def show_register(self):
         self.login_form.clear()

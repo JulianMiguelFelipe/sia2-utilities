@@ -1,10 +1,9 @@
 Put your PNG art in this folder using these exact file names.
-Any slot without a file shows an orange "PNG PLACEHOLDER" box instead.
+If the file is missing, an orange "PNG PLACEHOLDER" box shows instead.
 
-  login_art.png       Login screen, under "Available Features" (tall)
-  url_art_small.png   URL Shortener page, bottom left (small, tall-ish)
-  url_art_large.png   URL Shortener page, bottom right (wide)
-  fakedata_art.png    Fake Data Generator page (wide)
-  sms_art.png         SMS & Email page, next to History (tall)
+  login_art.png         Login screen, under "Available Features"
+  login_art_light.png   Optional: used in LIGHT mode instead (e.g. a black
+                        version, since white art disappears on white)
 
-Tip: PNGs with a transparent background look best on the black theme.
+Tip: PNGs with a transparent background look best.
+The image resizes with the window and never stretches.

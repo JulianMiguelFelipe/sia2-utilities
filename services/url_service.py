@@ -45,6 +45,46 @@ def save_short_url(user_id, original_url, short_url):
     conn.close()
 
 
+def find_existing(user_id, original_url):
+    """If this user already shortened this exact link, return that row (else None)."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, original_url, short_url, created_at FROM short_urls "
+        "WHERE user_id = ? AND original_url = ? ORDER BY id DESC LIMIT 1",
+        (user_id, original_url),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_short_urls(user_id, ids):
+    conn = get_connection()
+    conn.executemany("DELETE FROM short_urls WHERE id = ? AND user_id = ?",
+                     [(i, user_id) for i in ids])
+    conn.commit()
+    conn.close()
+
+
+def clear_short_urls(user_id):
+    conn = get_connection()
+    conn.execute("DELETE FROM short_urls WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_stats(user_id):
+    """How many links, and how many characters the short links saved in total."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COUNT(*) AS links, "
+        "COALESCE(SUM(MAX(LENGTH(original_url) - LENGTH(short_url), 0)), 0) AS saved, "
+        "MAX(created_at) AS last FROM short_urls WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row)
+
+
 def get_history(user_id):
     """All links this user has shortened, newest first."""
     conn = get_connection()

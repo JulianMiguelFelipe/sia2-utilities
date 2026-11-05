@@ -97,3 +97,51 @@ def login_user(username, password):
         return None, "Invalid username or password."
 
     return {"id": row["id"], "username": row["username"]}, "Login successful."
+
+
+# ---------- Account settings (from the gear menu) ----------
+
+def _check_current_password(conn, user_id, password):
+    row = conn.execute("SELECT password_hash, salt FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row is not None and verify_password(password, row["password_hash"], row["salt"])
+
+
+def change_username(user_id, new_username, current_password):
+    """Returns (success, message). Asks for the password so nobody can do it on an unattended PC."""
+    new_username = new_username.strip()
+    if not USERNAME_PATTERN.match(new_username):
+        return False, "Username must be 3-20 characters: letters, numbers, or underscore."
+    conn = get_connection()
+    try:
+        if not _check_current_password(conn, user_id, current_password):
+            return False, "Your current password is wrong."
+        conn.execute("UPDATE users SET username = ? WHERE id = ?", (new_username, user_id))
+        conn.commit()
+        return True, f"Username changed to {new_username}."
+    except sqlite3.IntegrityError:
+        return False, "That username is already taken."
+    finally:
+        conn.close()
+
+
+def change_password(user_id, current_password, new_password, confirm_password):
+    """Re-hashes with a NEW random salt. Returns (success, message)."""
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        return False, f"New password must be at least {MIN_PASSWORD_LENGTH} characters."
+    if not (re.search(r"[A-Za-z]", new_password) and re.search(r"\d", new_password)):
+        return False, "New password must contain at least one letter and one number."
+    if new_password != confirm_password:
+        return False, "New passwords do not match."
+    if new_password == current_password:
+        return False, "Choose a password different from your current one."
+    conn = get_connection()
+    try:
+        if not _check_current_password(conn, user_id, current_password):
+            return False, "Your current password is wrong."
+        pw_hash, salt = hash_password(new_password)
+        conn.execute("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                     (pw_hash, salt, user_id))
+        conn.commit()
+        return True, "Password changed."
+    finally:
+        conn.close()

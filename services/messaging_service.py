@@ -102,13 +102,20 @@ def connect_gmail(address, app_password):
     return address, app_password
 
 
-def send_email(gmail, to, subject, body):
-    """gmail = (address, app_password)."""
+def send_email(gmail, to, subject, body, in_reply_to=None, references=None):
+    """
+    gmail = (address, app_password).
+    For a reply, in_reply_to / references carry the original email's Message-ID,
+    so Gmail shows the reply in the same conversation.
+    """
     address, app_password = gmail
     msg = EmailMessage()
     msg["From"] = address
     msg["To"] = to
     msg["Subject"] = subject.strip() or "(no subject)"
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = f"{references} {in_reply_to}".strip() if references else in_reply_to
     msg.set_content(body)
 
     server = _gmail_login(address, app_password)
@@ -253,6 +260,42 @@ def get_sms_status(config, gateway_id):
     response = _smsgate_request("GET", f"{config.base_url}{config.path}/{gateway_id}", config)
     _check_response(response)
     return _read_state(response.json())
+
+
+# SMSGate's Local Server lists received texts at GET /inbox
+# (some versions use the /3rdparty/v1 prefix, so we try both).
+SMSGATE_INBOX_PATHS = ["/inbox", "/3rdparty/v1/inbox"]
+
+
+def get_sms_inbox(config, since_utc_iso):
+    """
+    Received texts on the phone since a time (ISO 8601, UTC).
+    Returns a list of dicts: {id, sender, text, created_at}.
+    """
+    params = {"type": "SMS", "from": since_utc_iso, "limit": 200}
+    for path in SMSGATE_INBOX_PATHS:
+        response = _smsgate_request("GET", config.base_url + path, config, params=params)
+        if response.status_code in (404, 405):
+            continue
+        _check_response(response)
+        try:
+            data = response.json()
+        except ValueError:
+            raise MessagingError("SMSGate sent an unexpected reply for the inbox.")
+        if isinstance(data, dict):                     # some versions wrap the list
+            data = data.get("items") or data.get("messages") or []
+        texts = []
+        for item in data:
+            texts.append({
+                "id": str(item.get("id", "")),
+                "sender": str(item.get("sender") or item.get("phoneNumber") or ""),
+                "text": str(item.get("contentPreview") or item.get("message")
+                            or item.get("text") or ""),
+                "created_at": str(item.get("createdAt") or item.get("receivedAt") or ""),
+            })
+        return texts
+    raise MessagingError("This SMSGate version can't share received texts. "
+                         "Update the SMSGate app to see replies.")
 
 
 # ================= Message log (database) =================
