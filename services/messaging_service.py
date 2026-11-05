@@ -208,7 +208,8 @@ def send_sms(config, to, body):
     if len(body) > SMS_MAX_LENGTH:
         raise MessagingError(f"SMS can't be longer than {SMS_MAX_LENGTH} characters.")
 
-    payload = {"textMessage": {"text": body}, "phoneNumbers": [to]}
+    payload = {"textMessage": {"text": body}, "phoneNumbers": [to],
+               "withDeliveryReport": True}                  # lets DELIVERED show up
     paths = [config.path] + [p for p in SMSGATE_PATHS if p != config.path]
     for path in paths:
         response = _smsgate_request("POST", config.base_url + path, config, json=payload)
@@ -288,6 +289,19 @@ def update_message_status(row_id, status, error=None):
                  (status, error, row_id))
     conn.commit()
     conn.close()
+
+
+def get_unfinished_sms(user_id, hours=24):
+    """QUEUED or SENT texts from the last day (to check again)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, gateway_id FROM messages WHERE user_id = ? AND type = 'sms' "
+        "AND status IN ('queued', 'sent') AND gateway_id IS NOT NULL "
+        "AND sent_at >= datetime('now', 'localtime', ?)",
+        (user_id, f"-{hours} hours"),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_messages(user_id):

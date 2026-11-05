@@ -1,6 +1,7 @@
 """SMS CHAT sub-tab: conversations and chat bubbles."""
 
 import html
+import re
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFontMetrics
@@ -122,8 +123,12 @@ class SmsChatTab(QWidget):
         convos = self.conversations()
         query = self.search.text().strip().lower()
         if query:
+            digits = re.sub(r"\D", "", query)
+            if digits.startswith("0"):
+                digits = "63" + digits[1:]                 # 0954... -> 63954...
             convos = [c for c in convos
-                      if query in c["phone"] or query in (c["name"] or "").lower()]
+                      if query in (c["name"] or "").lower() or query in c["phone"].lower()
+                      or (digits and digits in re.sub(r"\D", "", c["phone"]))]
         self.list.clear()
         self.empty_list.setVisible(not convos)
         for c in convos:

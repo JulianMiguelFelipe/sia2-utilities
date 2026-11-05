@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QButtonGroup, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from services.messaging_service import get_unfinished_sms
 from ui.compose_tab import ComposeTab
 from ui.email_inbox_tab import EmailInboxTab
 from ui.messaging_shared import Connections, SmsStatusTracker
@@ -62,6 +63,7 @@ class MessagingPage(QWidget):
         self.chat.unread_changed.connect(lambda n: self.set_badge(self.chat, n))
         self.inbox.unread_changed.connect(lambda n: self.set_badge(self.inbox, n))
         self.conn.changed.connect(self.update_dots)
+        self.conn.changed.connect(self.resume_tracking)
         self.update_dots()
         self.chat.refresh()                             # show the starting unread count
 
@@ -76,6 +78,13 @@ class MessagingPage(QWidget):
         badge = self.badges[page]
         badge.setText(str(count) if count < 100 else "99+")
         badge.setVisible(count > 0)
+
+    def resume_tracking(self):
+        """On SMS connect, check texts still QUEUED/SENT from earlier."""
+        if self.conn.smsgate:
+            for row in get_unfinished_sms(self.user["id"]):
+                if row["id"] not in self.tracker.pending:
+                    self.tracker.track(row["id"], row["gateway_id"])
 
     def update_dots(self):
         """EMAIL / SMS status dots."""

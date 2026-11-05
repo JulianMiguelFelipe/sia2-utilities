@@ -9,8 +9,8 @@ from services.messaging_service import MessagingError, get_sms_status, update_me
 from ui.widgets import make_box, make_button
 from ui.workers import run_in_background
 
-POLL_EVERY_MS = 3000          # check SMS status every 3 seconds...
-POLL_MAX_TRIES = 10           # ...for up to 30 seconds
+POLL_EVERY_MS = 5000          # check SMS status every 5 seconds...
+POLL_MAX_TRIES = 24           # ...for up to 2 minutes
 
 
 def make_input(placeholder="", password=False):
