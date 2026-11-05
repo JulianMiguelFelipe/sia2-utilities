@@ -1,18 +1,12 @@
-"""
-ui/styles.py
-One stylesheet (QSS, works like CSS) for the whole app.
-Bordered boxes with red and white (or black, in light mode) buttons.
-
-build_style(scale) builds it for the current theme (see theme.py) and makes it
-bigger for large windows: every font size, padding and border is multiplied by `scale`.
-"""
+"""App stylesheet (QSS) for the current theme and scale."""
 
 from ui.theme import colors
 
 
 def build_style(scale=1.0):
+    """Stylesheet for the current theme and scale."""
     def s(n):
-        """Scale a pixel size (always at least 1px)."""
+        """Scale a pixel size."""
         return max(1, round(n * scale))
 
     c = colors()
@@ -138,7 +132,9 @@ QPushButton#primary:pressed {{ background-color: {c['red_press']}; }}
 QPushButton#secondary {{ background-color: {c['alt_bg']}; color: {c['alt_fg']}; border: none; }}
 QPushButton#secondary:hover   {{ background-color: {c['info']}; }}
 QPushButton#secondary:pressed {{ background-color: {c['alt_press']}; }}
-QPushButton:disabled {{ background-color: {c['disabled_bg']}; color: {c['disabled_fg']}; }}
+QPushButton:disabled, QPushButton#primary:disabled, QPushButton#secondary:disabled {{
+    background-color: {c['disabled_bg']}; color: {c['disabled_fg']};
+}}
 
 /* Header: clock and username */
 QLabel#headerInfo {{ color: {c['muted']}; font-size: {s(12)}px; font-weight: 600; }}
@@ -196,6 +192,28 @@ QTextBrowser#chatView {{
     padding: {s(10)}px {s(14)}px;
     font-size: {s(13)}px;
 }}
+QTextBrowser#emailBody {{
+    background-color: {BG};
+    color: {FG};
+    border: none;
+    padding: {s(14)}px {s(20)}px;
+}}
+QLabel#emailSubject {{ font-size: {s(20)}px; font-weight: 800; }}
+QLabel#emailSender  {{ font-size: {s(13)}px; font-weight: 800; }}
+QLabel#avatar {{
+    background-color: {RED};
+    color: {c['on_red']};
+    border-radius: {s(19)}px;
+    font-size: {s(16)}px;
+    font-weight: 800;
+}}
+QLabel#attachments {{
+    color: {c['muted']};
+    font-size: {s(11)}px;
+    border: {s(1)}px solid {c['line']};
+    border-radius: {s(6)}px;
+    padding: {s(5)}px {s(8)}px;
+}}
 QWidget#chatHeader {{ border-bottom: {s(2)}px solid {BORDER}; }}
 QWidget#chatFooter {{ border-top: {s(2)}px solid {BORDER}; }}
 
@@ -219,6 +237,13 @@ QMenu {{
 }}
 QMenu::item {{ padding: {s(6)}px {s(18)}px; }}
 QMenu::item:selected {{ background-color: {RED}; color: {c['on_red']}; }}
+QMenu::indicator {{
+    width: {s(14)}px; height: {s(14)}px;
+    border: {s(2)}px solid {BORDER};
+    border-radius: {s(3)}px;
+    margin-left: {s(6)}px;
+}}
+QMenu::indicator:checked {{ background-color: {RED}; border-color: {RED}; }}
 QMenu::item:disabled {{ color: {c['muted']}; }}
 QMenu::separator {{ height: 1px; background: {c['faint']}; margin: {s(4)}px {s(6)}px; }}
 
@@ -234,5 +259,5 @@ QMessageBox QPushButton, QDialog QPushButton {{
 
 
 def app_style():
-    """The normal-size stylesheet for the current theme."""
+    """Normal-size stylesheet."""
     return build_style(1.0)

@@ -1,16 +1,4 @@
-"""
-services/messaging_service.py
-SMS & Email logic. No GUI code here.
-
-  Email: Gmail SMTP (SSL, port 465) using the user's Gmail + App Password.
-  SMS:   SMSGate, an Android app that turns a phone + PH SIM into an SMS gateway.
-         The app sends an HTTP POST (Basic Auth) to the phone over the local network:
-             POST http://<phone-ip>:<port>/message
-             {"textMessage": {"text": "..."}, "phoneNumbers": ["+639..."]}
-
-Credentials are NEVER saved. The page keeps them in memory only and wipes them
-on logout. Only the message log is stored in the database.
-"""
+"""SMS & Email sending: Gmail SMTP, SMSGate HTTP, message log."""
 
 import re
 import smtplib
@@ -40,17 +28,12 @@ SMSGATE_STATES = {
 
 
 class MessagingError(Exception):
-    """An error with a message that is safe to show to the user."""
+    """Error with a message safe to show."""
 
 
-# ================= Recipient detection =================
-
+# ---------- Recipient detection ----------
 def normalize_phone(text):
-    """
-    Turn a phone number into international format (+639171234567).
-    Accepts 09171234567, 639171234567, +639171234567 (spaces/dashes OK).
-    Returns None if it isn't a valid number.
-    """
+    """PH number to +639... format."""
     number = re.sub(r"[\s\-()]", "", text)
     if re.fullmatch(r"09\d{9}", number):
         return "+63" + number[1:]
@@ -62,7 +45,7 @@ def normalize_phone(text):
 
 
 def detect_type(recipient):
-    """Return 'email', 'sms', or None (not valid yet)."""
+    """Email, SMS, or not valid."""
     recipient = recipient.strip()
     if not recipient:
         return None
@@ -71,10 +54,9 @@ def detect_type(recipient):
     return "sms" if normalize_phone(recipient) else None
 
 
-# ================= Gmail =================
-
+# ---------- Gmail ----------
 def _gmail_login(address, app_password):
-    """Open a secure connection to Gmail and log in. Returns the server."""
+    """Log in to Gmail SMTP."""
     try:
         server = smtplib.SMTP_SSL(GMAIL_HOST, GMAIL_PORT, timeout=15)
     except OSError:
@@ -91,7 +73,7 @@ def _gmail_login(address, app_password):
 
 
 def connect_gmail(address, app_password):
-    """Log in once to check the details. Returns cleaned (address, app_password)."""
+    """Check Gmail + App Password."""
     address = address.strip()
     app_password = re.sub(r"\s", "", app_password)   # "abcd efgh ..." -> "abcdefgh..."
     if not EMAIL_PATTERN.match(address):
@@ -103,11 +85,7 @@ def connect_gmail(address, app_password):
 
 
 def send_email(gmail, to, subject, body, in_reply_to=None, references=None):
-    """
-    gmail = (address, app_password).
-    For a reply, in_reply_to / references carry the original email's Message-ID,
-    so Gmail shows the reply in the same conversation.
-    """
+    """Send an email (or a reply)."""
     address, app_password = gmail
     msg = EmailMessage()
     msg["From"] = address
@@ -132,10 +110,10 @@ def send_email(gmail, to, subject, body, in_reply_to=None, references=None):
             pass
 
 
-# ================= SMSGate (SMS) =================
-
+# ---------- SMSGate (SMS) ----------
 @dataclass(frozen=True)
 class SmsGateConfig:
+    """SMSGate connection details."""
     base_url: str          # e.g. http://192.168.43.1:8080
     username: str
     password: str
@@ -143,10 +121,7 @@ class SmsGateConfig:
 
 
 def build_base_url(ip_text, port_text):
-    """
-    Accepts '192.168.43.1' + '8080', or a pasted 'http://192.168.43.1:8080'.
-    Returns 'http://192.168.43.1:8080'.
-    """
+    """Phone IP + port to a URL."""
     host = re.sub(r"^https?://", "", ip_text.strip(), flags=re.IGNORECASE).rstrip("/")
     port = port_text.strip()
     if ":" in host:                                  # port pasted together with the IP
@@ -159,7 +134,7 @@ def build_base_url(ip_text, port_text):
 
 
 def _smsgate_request(method, url, config, **kwargs):
-    """Send one HTTP request to the phone and turn network problems into clear errors."""
+    """One HTTP request to the phone."""
     try:
         return requests.request(method, url, auth=(config.username, config.password),
                                 timeout=SMSGATE_TIMEOUT, **kwargs)
@@ -174,7 +149,7 @@ def _smsgate_request(method, url, config, **kwargs):
 
 
 def _check_response(response):
-    """Raise a clear error for any non-success HTTP status."""
+    """Turn HTTP errors into messages."""
     if response.status_code == 401:
         raise MessagingError("Wrong SMSGate username or password.")
     if response.status_code == 400:
@@ -190,7 +165,7 @@ def _check_response(response):
 
 
 def _read_state(data):
-    """From SMSGate's JSON reply, return (our_status, error_reason_or_None)."""
+    """Message status from SMSGate's reply."""
     state = str(data.get("state", "")).lower()
     status = SMSGATE_STATES.get(state, "queued")
     error = None
@@ -202,14 +177,12 @@ def _read_state(data):
 
 
 def _is_json(response):
+    """Is the reply JSON?"""
     return "json" in response.headers.get("Content-Type", "")
 
 
 def connect_smsgate(ip_text, port_text, username, password):
-    """
-    Check that the phone is reachable and the login works.
-    Returns an SmsGateConfig to keep in memory.
-    """
+    """Check the phone and login."""
     config = SmsGateConfig(build_base_url(ip_text, port_text),
                            username.strip(), password.strip())
     if not config.username or not config.password:
@@ -231,10 +204,7 @@ def connect_smsgate(ip_text, port_text, username, password):
 
 
 def send_sms(config, to, body):
-    """
-    Ask the phone to send an SMS.
-    Returns (gateway_id, status, error, config). `config` may have an updated path.
-    """
+    """Send an SMS through the phone."""
     if len(body) > SMS_MAX_LENGTH:
         raise MessagingError(f"SMS can't be longer than {SMS_MAX_LENGTH} characters.")
 
@@ -256,7 +226,7 @@ def send_sms(config, to, body):
 
 
 def get_sms_status(config, gateway_id):
-    """Ask the phone what happened to a message. Returns (status, error)."""
+    """Status of a sent SMS."""
     response = _smsgate_request("GET", f"{config.base_url}{config.path}/{gateway_id}", config)
     _check_response(response)
     return _read_state(response.json())
@@ -268,10 +238,7 @@ SMSGATE_INBOX_PATHS = ["/inbox", "/3rdparty/v1/inbox"]
 
 
 def get_sms_inbox(config, since_utc_iso):
-    """
-    Received texts on the phone since a time (ISO 8601, UTC).
-    Returns a list of dicts: {id, sender, text, created_at}.
-    """
+    """Texts received on the phone."""
     params = {"type": "SMS", "from": since_utc_iso, "limit": 200}
     for path in SMSGATE_INBOX_PATHS:
         response = _smsgate_request("GET", config.base_url + path, config, params=params)
@@ -298,11 +265,10 @@ def get_sms_inbox(config, since_utc_iso):
                          "Update the SMSGate app to see replies.")
 
 
-# ================= Message log (database) =================
-
+# ---------- Message log (database) ----------
 def log_message(user_id, msg_type, recipient, subject, body, status,
                 gateway_id=None, error=None):
-    """Save one message. Returns its row ID."""
+    """Save a message to history."""
     conn = get_connection()
     cur = conn.execute(
         "INSERT INTO messages (user_id, type, recipient, subject, body, status, "
@@ -316,6 +282,7 @@ def log_message(user_id, msg_type, recipient, subject, body, status,
 
 
 def update_message_status(row_id, status, error=None):
+    """Update a message's status."""
     conn = get_connection()
     conn.execute("UPDATE messages SET status = ?, error = COALESCE(?, error) WHERE id = ?",
                  (status, error, row_id))
@@ -324,7 +291,7 @@ def update_message_status(row_id, status, error=None):
 
 
 def get_messages(user_id):
-    """All messages this user has sent, newest first."""
+    """This user's message history."""
     conn = get_connection()
     rows = conn.execute(
         "SELECT id, type, recipient, subject, body, status, gateway_id, error, sent_at "
@@ -336,6 +303,7 @@ def get_messages(user_id):
 
 
 def delete_messages(user_id, message_ids):
+    """Delete selected messages."""
     conn = get_connection()
     conn.executemany("DELETE FROM messages WHERE id = ? AND user_id = ?",
                      [(mid, user_id) for mid in message_ids])
@@ -344,6 +312,7 @@ def delete_messages(user_id, message_ids):
 
 
 def clear_messages(user_id):
+    """Delete all messages."""
     conn = get_connection()
     conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
     conn.commit()

@@ -1,14 +1,4 @@
-"""
-services/email_inbox_service.py
-EMAIL INBOX logic: read Gmail over IMAP with the same Gmail + App Password.
-No GUI code here.
-
-  IMAP = the standard way email apps READ a mailbox (SMTP is for SENDING).
-  Gmail's IMAP server: imap.gmail.com, port 993, encrypted (SSL).
-
-Nothing is saved: emails stay in Gmail and are only loaded while connected.
-The app never deletes, moves or archives anything.
-"""
+"""Email inbox: read Gmail over IMAP."""
 
 import html
 import imaplib
@@ -26,8 +16,8 @@ PAGE_SIZE = 30
 
 
 # ---------- Connecting ----------
-
 def _imap_login(gmail):
+    """Log in to Gmail IMAP."""
     address, app_password = gmail
     try:
         imap = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=20)
@@ -47,6 +37,7 @@ def _imap_login(gmail):
 
 
 def _close(imap):
+    """Log out of IMAP."""
     try:
         imap.logout()
     except (imaplib.IMAP4.error, OSError):
@@ -54,9 +45,8 @@ def _close(imap):
 
 
 # ---------- Who did we email? (for the "only JD UTILS" filter) ----------
-
 def emailed_addresses(user_id):
-    """Every address this user has emailed through JD UTILS (sent OK)."""
+    """Addresses this user emailed."""
     conn = get_connection()
     rows = conn.execute(
         "SELECT DISTINCT lower(recipient) AS r FROM messages "
@@ -68,8 +58,18 @@ def emailed_addresses(user_id):
 
 
 # ---------- The inbox list ----------
+def _sender(header):
+    """Sender name and address."""
+    value = header.get("From")
+    addresses = getattr(value, "addresses", None)
+    if addresses:
+        return addresses[0].display_name or addresses[0].addr_spec, addresses[0].addr_spec
+    name, address = parseaddr(str(value or ""))
+    return name or address, address
+
 
 def _when(date_header):
+    """Email date as local time."""
     try:
         return parsedate_to_datetime(date_header).astimezone()
     except (TypeError, ValueError, IndexError):
@@ -77,12 +77,7 @@ def _when(date_header):
 
 
 def fetch_inbox(gmail, limit=PAGE_SIZE, only_from=None):
-    """
-    The newest `limit` emails in INBOX, newest first.
-    only_from = a list of addresses: show only emails from them (None = everyone).
-    Returns (emails, has_more). Each email: {uid, name, address, subject, date, unread}.
-    Uses BODY.PEEK, so listing does NOT mark anything as read.
-    """
+    """Newest emails in the inbox."""
     if only_from is not None and not only_from:
         return [], False                       # filter on, but we emailed nobody yet
 
@@ -112,7 +107,7 @@ def fetch_inbox(gmail, limit=PAGE_SIZE, only_from=None):
             uid = re.search(r"UID (\d+)", meta)
             flags = re.search(r"FLAGS \(([^)]*)\)", meta)
             header = message_from_bytes(part[1], policy=policy.default)
-            name, address = parseaddr(str(header.get("From", "")))
+            name, address = _sender(header)
             emails.append({
                 "uid": uid.group(1) if uid else "",
                 "name": name or address,
@@ -132,37 +127,42 @@ def fetch_inbox(gmail, limit=PAGE_SIZE, only_from=None):
 
 
 # ---------- Opening one email ----------
-
 class _HTMLToText(HTMLParser):
-    """Turns an HTML-only email into readable plain text (no images, no scripts)."""
+    """HTML email to plain text."""
 
     BREAKS = {"br", "p", "div", "tr", "li", "h1", "h2", "h3", "h4", "table"}
 
     def __init__(self):
+        """Start empty."""
         super().__init__()
         self.parts, self.skip = [], 0
 
     def handle_starttag(self, tag, attrs):
+        """Line breaks; skip scripts/styles."""
         if tag in ("script", "style", "head"):
             self.skip += 1
         elif tag in self.BREAKS:
             self.parts.append("\n")
 
     def handle_endtag(self, tag):
+        """End of a skipped tag."""
         if tag in ("script", "style", "head") and self.skip:
             self.skip -= 1
 
     def handle_data(self, data):
+        """Keep visible text."""
         if not self.skip:
             self.parts.append(data)
 
     def text(self):
+        """The cleaned-up text."""
         out = html.unescape("".join(self.parts))
         out = re.sub(r"[ \t]+", " ", out)
         return re.sub(r"\n\s*\n+", "\n\n", out).strip()
 
 
 def _body_text(msg):
+    """Readable text of an email."""
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return "(This email has no text to show.)"
@@ -178,14 +178,12 @@ def _body_text(msg):
 
 
 def _size(n):
+    """File size as KB / MB."""
     return f"{n / 1024 / 1024:.1f} MB" if n >= 1024 * 1024 else f"{max(1, n // 1024)} KB"
 
 
 def open_email(gmail, uid):
-    """
-    Download one full email. This marks it as READ in Gmail (like opening it on your phone).
-    Attachments are listed by name and size only; they're never saved or opened.
-    """
+    """Download one email (marks it read)."""
     imap = _imap_login(gmail)
     try:
         imap.select("INBOX")                      # not read-only: lets Gmail mark it read
@@ -194,7 +192,7 @@ def open_email(gmail, uid):
         if raw is None:
             raise MessagingError("That email isn't in the inbox anymore. Try REFRESH.")
         msg = message_from_bytes(raw, policy=policy.default)
-        name, address = parseaddr(str(msg.get("From", "")))
+        name, address = _sender(msg)
         attachments = []
         for part in msg.iter_attachments():
             payload = part.get_payload(decode=True) or b""
@@ -202,7 +200,7 @@ def open_email(gmail, uid):
         to = ", ".join(a for _, a in getaddresses([str(msg.get("To", ""))]) if a)
         return {
             "uid": uid,
-            "name": name or address,
+            "name": name,
             "address": address,
             "to": to,
             "subject": str(msg.get("Subject", "")) or "(no subject)",
@@ -221,11 +219,12 @@ def open_email(gmail, uid):
 
 
 def reply_subject(subject):
+    """Add 'Re:' to a subject."""
     return subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
 
 def quote_original(email):
-    """The original email under your reply, each line starting with '> '."""
+    """Original email quoted under a reply."""
     when = email["date"].strftime("%b %d, %Y, %I:%M %p") if email["date"] else "earlier"
     lines = email["body"].splitlines()[:40]
     quoted = "\n".join(f"> {line}" for line in lines)

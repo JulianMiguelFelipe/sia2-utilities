@@ -1,12 +1,4 @@
-"""
-auth/auth.py
-User registration and login (username + password).
-
-Passwords are NEVER stored as plain text. Each password is:
-  1. combined with a random "salt" (16 random bytes, unique per user)
-  2. hashed with PBKDF2-HMAC-SHA256 (200,000 rounds) from Python's built-in hashlib
-Only the hash and the salt are saved in the database.
-"""
+"""Login system: register, login, password hashing, account changes."""
 
 import hashlib
 import hmac
@@ -22,9 +14,8 @@ MIN_PASSWORD_LENGTH = 8
 
 
 # ---------- Password hashing ----------
-
 def hash_password(password, salt=None):
-    """Hash a password with a salt. Returns (hash_hex, salt_hex)."""
+    """Hash a password with a salt."""
     if salt is None:
         salt = os.urandom(16)                  # new random salt for new users
     pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, ITERATIONS)
@@ -32,15 +23,14 @@ def hash_password(password, salt=None):
 
 
 def verify_password(password, stored_hash, stored_salt):
-    """Re-hash the entered password with the stored salt and compare."""
+    """Check a password against its stored hash."""
     new_hash, _ = hash_password(password, bytes.fromhex(stored_salt))
     return hmac.compare_digest(new_hash, stored_hash)   # safe comparison
 
 
 # ---------- Validation ----------
-
 def validate_registration(username, password, confirm_password):
-    """Return an error message, or None if everything is valid."""
+    """Check the sign-up fields."""
     if not username or not password or not confirm_password:
         return "Please fill in all fields."
     if not USERNAME_PATTERN.match(username):
@@ -55,9 +45,8 @@ def validate_registration(username, password, confirm_password):
 
 
 # ---------- Register / Login ----------
-
 def register_user(username, password, confirm_password):
-    """Create a new account. Returns (success, message)."""
+    """Create a new account."""
     username = username.strip()
     error = validate_registration(username, password, confirm_password)
     if error:
@@ -79,7 +68,7 @@ def register_user(username, password, confirm_password):
 
 
 def login_user(username, password):
-    """Check credentials. Returns (user_dict, message). user_dict is None on failure."""
+    """Check username and password."""
     username = username.strip()
     if not username or not password:
         return None, "Please enter your username and password."
@@ -100,14 +89,14 @@ def login_user(username, password):
 
 
 # ---------- Account settings (from the gear menu) ----------
-
 def _check_current_password(conn, user_id, password):
+    """Check the signed-in user's password."""
     row = conn.execute("SELECT password_hash, salt FROM users WHERE id = ?", (user_id,)).fetchone()
     return row is not None and verify_password(password, row["password_hash"], row["salt"])
 
 
 def change_username(user_id, new_username, current_password):
-    """Returns (success, message). Asks for the password so nobody can do it on an unattended PC."""
+    """Change the username."""
     new_username = new_username.strip()
     if not USERNAME_PATTERN.match(new_username):
         return False, "Username must be 3-20 characters: letters, numbers, or underscore."
@@ -125,7 +114,7 @@ def change_username(user_id, new_username, current_password):
 
 
 def change_password(user_id, current_password, new_password, confirm_password):
-    """Re-hashes with a NEW random salt. Returns (success, message)."""
+    """Change the password (new salt + hash)."""
     if len(new_password) < MIN_PASSWORD_LENGTH:
         return False, f"New password must be at least {MIN_PASSWORD_LENGTH} characters."
     if not (re.search(r"[A-Za-z]", new_password) and re.search(r"\d", new_password)):

@@ -1,19 +1,6 @@
-"""
-services/sms_chat_service.py
-SMS CHAT logic: conversations, replies, names, unread counts. No GUI code here.
+"""SMS chat: conversations, replies, names, privacy filter."""
 
-A conversation with a number is made of:
-  - texts YOU sent to it   -> the `messages` table (type 'sms')
-  - texts it sent back     -> the `sms_inbox` table
-
-PRIVACY FILTER: the phone's inbox holds every text on that phone (OTPs, banks,
-personal chats). We only save a received text if
-  1. its sender is a number you texted through JD UTILS, and
-  2. it arrived AFTER your first text to that number.
-Everything else on the phone is ignored and never stored.
-"""
-
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from database.db import get_connection
 from services.messaging_service import normalize_phone
@@ -22,12 +9,12 @@ TIME_FORMAT = "%Y-%m-%d %H:%M:%S"          # how SQLite stores our local times
 
 
 def now_local():
+    """Current local time."""
     return datetime.now().strftime(TIME_FORMAT)
 
 
 def parse_phone_time(text):
-    """SMSGate gives ISO 8601 times ('2026-11-05T07:32:10.000+08:00' or '...Z').
-    Returns local time in our format, or None if it can't be read."""
+    """Phone time to local time."""
     if not text:
         return None
     try:
@@ -40,9 +27,8 @@ def parse_phone_time(text):
 
 
 # ---------- Who are we allowed to hear from? ----------
-
 def first_sent_times(user_id):
-    """{phone: time of your first (not failed) text to it}."""
+    """First text sent to each number."""
     conn = get_connection()
     rows = conn.execute(
         "SELECT recipient, MIN(sent_at) AS first FROM messages "
@@ -54,24 +40,27 @@ def first_sent_times(user_id):
 
 
 def inbox_since_utc(first_sent):
-    """The earliest time worth asking the phone about, as UTC ISO 8601."""
+    """Earliest time to ask the phone about."""
     earliest = min(first_sent.values())
     local = datetime.strptime(earliest, TIME_FORMAT).astimezone()   # naive -> local
     return local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def save_incoming(user_id, texts, first_sent):
-    """Keep only allowed replies (see PRIVACY FILTER). Returns how many were new."""
+    """Save allowed replies (privacy filter)."""
     conn = get_connection()
-    new = 0
+    new, others = 0, []
     for t in texts:
         phone = normalize_phone(t["sender"])
         received_at = parse_phone_time(t["created_at"])
-        if not phone or phone not in first_sent or not received_at:
-            continue                                   # not someone we texted
-        if received_at < first_sent[phone]:
-            continue                                   # older than our first text
-        key = f"{t['id']}|{phone}|{t['created_at']}"
+        if not received_at:
+            continue
+        key = f"{t['id']}|{phone or t['sender']}|{t['created_at']}"   # same text = same key
+        if not phone or phone not in first_sent or received_at < first_sent[phone]:
+            others.append({"phone": phone or t["sender"], "body": t["text"], "at": received_at,
+                           "mine": 0, "status": "received", "error": None, "id": 0,
+                           "key": key, "outside": True})
+            continue
         cur = conn.execute(
             "INSERT OR IGNORE INTO sms_inbox (user_id, phone, body, received_at, external_key) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -80,13 +69,18 @@ def save_incoming(user_id, texts, first_sent):
         new += cur.rowcount
     conn.commit()
     conn.close()
-    return new
+    return new, others
+
+
+def everyone_since_utc(first_sent, days=7):
+    """Start time when showing everyone."""
+    week = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return min(week, inbox_since_utc(first_sent)) if first_sent else week
 
 
 # ---------- Conversations ----------
-
 def _all_texts(conn, user_id, phone=None):
-    """Sent + received texts as one list, oldest first."""
+    """Sent + received texts, oldest first."""
     sql = (
         "SELECT recipient AS phone, body, sent_at AS at, 1 AS mine, status, error, id "
         "FROM messages WHERE user_id = ? AND type = 'sms' {f1} "
@@ -105,13 +99,14 @@ def _all_texts(conn, user_id, phone=None):
 
 
 def _contacts(conn, user_id):
+    """Saved names and read times."""
     rows = conn.execute("SELECT phone, name, last_read_at FROM contacts WHERE user_id = ?",
                         (user_id,)).fetchall()
     return {r["phone"]: dict(r) for r in rows}
 
 
 def list_conversations(user_id):
-    """Newest first: [{phone, name, last_text, last_at, last_mine, unread}]."""
+    """Conversations, newest first."""
     conn = get_connection()
     texts = _all_texts(conn, user_id)
     contacts = _contacts(conn, user_id)
@@ -133,6 +128,7 @@ def list_conversations(user_id):
 
 
 def get_thread(user_id, phone):
+    """All texts with one number."""
     conn = get_connection()
     texts = _all_texts(conn, user_id, phone)
     conn.close()
@@ -140,10 +136,12 @@ def get_thread(user_id, phone):
 
 
 def unread_total(user_id):
+    """Total unread replies."""
     return sum(c["unread"] for c in list_conversations(user_id))
 
 
 def ensure_contact(user_id, phone):
+    """Add a number to contacts."""
     conn = get_connection()
     conn.execute("INSERT OR IGNORE INTO contacts (user_id, phone) VALUES (?, ?)",
                  (user_id, phone))
@@ -152,6 +150,7 @@ def ensure_contact(user_id, phone):
 
 
 def rename_contact(user_id, phone, name):
+    """Give a number a name."""
     ensure_contact(user_id, phone)
     conn = get_connection()
     conn.execute("UPDATE contacts SET name = ? WHERE user_id = ? AND phone = ?",
@@ -161,6 +160,7 @@ def rename_contact(user_id, phone, name):
 
 
 def mark_read(user_id, phone):
+    """Mark a chat as read."""
     ensure_contact(user_id, phone)
     conn = get_connection()
     conn.execute("UPDATE contacts SET last_read_at = ? WHERE user_id = ? AND phone = ?",
@@ -170,7 +170,7 @@ def mark_read(user_id, phone):
 
 
 def delete_conversation(user_id, phone):
-    """Removes the chat from JD UTILS only (texts on the phone are untouched)."""
+    """Delete a chat from JD UTILS."""
     conn = get_connection()
     conn.execute("DELETE FROM sms_inbox WHERE user_id = ? AND phone = ?", (user_id, phone))
     conn.execute("DELETE FROM messages WHERE user_id = ? AND type = 'sms' AND recipient = ?",

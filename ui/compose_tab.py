@@ -1,15 +1,4 @@
-"""
-ui/compose_tab.py
-COMPOSE sub-tab of SMS & EMAIL UI.
-
-  EMAIL / SMS boxes: enter login details and press CONNECT. The logins live in
-      the shared Connections object (memory only), so SMS CHAT and EMAIL INBOX
-      use them too. Wiped on logout.
-  SEND MESSAGE: one SEND TO field. An email address sends an email,
-      a phone number sends an SMS. Sending runs in the background.
-  HISTORY: every send, saved in the database. SMS rows start as QUEUED and
-      update to SENT / DELIVERED / FAILED as the phone reports back.
-"""
+"""COMPOSE sub-tab: connections, send message, history."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -29,9 +18,11 @@ from ui.workers import run_in_background
 from ui.signals import connect_alive
 
 class ComposeTab(QWidget):
+    """COMPOSE sub-tab."""
     sent_something = Signal()          # tells SMS CHAT a new text went out
 
     def __init__(self, user, connections, tracker):
+        """Build the tab."""
         super().__init__()
         self.user = user
         self.conn = connections            # shared logins (memory only)
@@ -39,7 +30,7 @@ class ComposeTab(QWidget):
         tracker.updated.connect(self.refresh_history)
         connect_alive(theme_events.changed, self, lambda _t: (self.refresh_history(), self.update_recipient_type()))
 
-        # ----- Layout -----
+        # ---------- Layout ----------
         left = QVBoxLayout()
         left.setSpacing(10)
         left.addWidget(self.build_gmail_box())
@@ -70,23 +61,27 @@ class ComposeTab(QWidget):
     # The logins live in the shared Connections object
     @property
     def gmail(self):
+        """Shared Gmail login."""
         return self.conn.gmail
 
     @gmail.setter
     def gmail(self, value):
+        """Shared Gmail login."""
         self.conn.set_gmail(value)
 
     @property
     def smsgate(self):
+        """Shared SMSGate login."""
         return self.conn.smsgate
 
     @smsgate.setter
     def smsgate(self, value):
+        """Shared SMSGate login."""
         self.conn.set_smsgate(value)
 
-    # ================= EMAIL (Gmail) =================
-
+    # ---------- EMAIL (Gmail) ----------
     def build_gmail_box(self):
+        """EMAIL connection box."""
         self.gmail_box = ConnectionBox("EMAIL", "Your Gmail address and its 16-letter App Password")
         self.gmail_address = make_input("yourname@gmail.com")
         self.gmail_password = make_input("16-letter App Password", password=True)
@@ -97,6 +92,7 @@ class ComposeTab(QWidget):
         return self.gmail_box
 
     def toggle_gmail(self):
+        """Connect or disconnect Gmail."""
         if self.gmail:                                    # DISCONNECT
             self.gmail = None
             self.gmail_password.clear()
@@ -107,18 +103,20 @@ class ComposeTab(QWidget):
                           on_done=self.gmail_connected, on_error=self.gmail_failed)
 
     def gmail_connected(self, gmail):
+        """Gmail connected."""
         self.gmail = gmail
         self.gmail_box.set_busy(False)
         self.gmail_box.set_connected(True)
 
     def gmail_failed(self, err):
+        """Gmail failed to connect."""
         self.gmail_box.set_busy(False)
         self.gmail_box.set_connected(False)
         self.gmail_box.show_error(friendly(err))
 
-    # ================= SMS (SMSGate) =================
-
+    # ---------- SMS (SMSGate) ----------
     def build_smsgate_box(self):
+        """SMS connection box."""
         self.sms_box = ConnectionBox("SMS", "Phone IP, port and login from the SMSGate app")
         self.sms_ip = make_input("Phone IP, e.g. 192.168.43.1")
         self.sms_port = make_input("Port")
@@ -140,6 +138,7 @@ class ComposeTab(QWidget):
         return self.sms_box
 
     def toggle_smsgate(self):
+        """Connect or disconnect SMSGate."""
         if self.smsgate:                                  # DISCONNECT
             self.smsgate = None
             self.sms_password.clear()
@@ -151,26 +150,28 @@ class ComposeTab(QWidget):
                           on_done=self.smsgate_connected, on_error=self.smsgate_failed)
 
     def smsgate_connected(self, config):
+        """SMSGate connected."""
         self.smsgate = config
         self.sms_box.set_busy(False)
         self.sms_box.set_connected(True)
 
     def smsgate_failed(self, err):
+        """SMSGate failed to connect."""
         self.sms_box.set_busy(False)
         self.sms_box.set_connected(False)
         self.sms_box.show_error(friendly(err))
 
     def clear_credentials(self):
-        """Called on logout: clear every login field (the container clears Connections)."""
+        """Clear login fields (logout)."""
         for field in (self.gmail_address, self.gmail_password, self.sms_ip,
                       self.sms_user, self.sms_password):
             field.clear()
         self.gmail_box.set_connected(False)
         self.sms_box.set_connected(False)
 
-    # ================= SEND MESSAGE =================
-
+    # ---------- SEND MESSAGE ----------
     def build_send_box(self):
+        """SEND MESSAGE box."""
         box = make_box()
 
         self.recipient = make_input("email@example.com or 09171234567")
@@ -224,6 +225,7 @@ class ComposeTab(QWidget):
         return box
 
     def update_recipient_type(self):
+        """EMAIL / SMS badge."""
         kind = detect_type(self.recipient.text())
         if kind:
             self.type_badge.setText(kind.upper())
@@ -236,6 +238,7 @@ class ComposeTab(QWidget):
         self.update_char_count()
 
     def update_char_count(self):
+        """Character counter."""
         count = len(self.body.toPlainText())
         if detect_type(self.recipient.text()) == "sms":
             self.char_count.setText(f"{count} / {SMS_MAX_LENGTH}")
@@ -243,6 +246,7 @@ class ComposeTab(QWidget):
             self.char_count.setText(f"{count} characters")
 
     def handle_send(self):
+        """SEND button."""
         to = self.recipient.text().strip()
         kind = detect_type(to)
         subject = self.subject.text().strip()
@@ -275,10 +279,12 @@ class ComposeTab(QWidget):
                               on_error=lambda err: self.send_failed("sms", job, err))
 
     def finish_sending(self):
+        """Reset the SEND button."""
         self.send_btn.setEnabled(True)
         self.send_btn.setText("SEND")
 
     def email_done(self, job):
+        """Email sent."""
         to, subject, body = job
         log_message(self.user["id"], "email", to, subject, body, "sent")
         self.finish_sending()
@@ -288,6 +294,7 @@ class ComposeTab(QWidget):
         self.refresh_history()
 
     def sms_done(self, job, result):
+        """SMS accepted by the phone."""
         to, _, body = job
         gateway_id, status, error, config = result
         if self.smsgate:
@@ -305,6 +312,7 @@ class ComposeTab(QWidget):
         self.sent_something.emit()
 
     def send_failed(self, kind, job, err):
+        """Sending failed."""
         to, subject, body = job
         log_message(self.user["id"], kind, to, subject, body, "failed", error=friendly(err))
         self.finish_sending()
@@ -313,14 +321,15 @@ class ComposeTab(QWidget):
         self.sent_something.emit()
 
     def clear_form(self):
+        """CLEAR button."""
         self.recipient.clear()
         self.subject.clear()
         self.body.clear()
         self.send_status.clear()
 
-    # ================= HISTORY =================
-
+    # ---------- HISTORY ----------
     def build_history_box(self):
+        """HISTORY box."""
         box = make_box()
 
         self.table = QTableWidget(0, 5)
@@ -358,6 +367,7 @@ class ComposeTab(QWidget):
         return box
 
     def refresh_history(self):
+        """Reload the history table."""
         rows = get_messages(self.user["id"])
         self.table.setRowCount(len(rows))
         self.empty_label.setVisible(not rows)
@@ -379,6 +389,7 @@ class ComposeTab(QWidget):
                 self.table.setItem(r, c, item)
 
     def handle_delete(self):
+        """DELETE SELECTED button."""
         rows = {i.row() for i in self.table.selectedIndexes()}
         if not rows:
             return
@@ -389,6 +400,7 @@ class ComposeTab(QWidget):
         self.sent_something.emit()
 
     def handle_clear_all(self):
+        """CLEAR ALL button."""
         if self.table.rowCount() == 0:
             return
         answer = QMessageBox.question(self, "JD UTILS", "Delete your whole message history?")

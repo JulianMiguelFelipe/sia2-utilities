@@ -1,16 +1,4 @@
-"""
-ui/messaging_page.py
-The SMS & EMAIL UI page: three sub-tabs that share one set of logins.
-
-  [ COMPOSE ]  [ SMS CHAT (2) ]  [ EMAIL INBOX (1) ]        ● EMAIL  ● SMS
-
-  COMPOSE      - connect EMAIL and SMS, send one-off messages, history (compose_tab.py)
-  SMS CHAT     - conversations with replies through SMSGate (sms_chat_tab.py)
-  EMAIL INBOX  - read and reply to Gmail over IMAP (email_inbox_tab.py)
-
-The red numbers are unread counts. The dots on the right show which
-connections are on, whichever sub-tab you're in.
-"""
+"""SMS & EMAIL UI page: the three sub-tabs."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -24,7 +12,9 @@ from ui.sms_chat_tab import SmsChatTab
 
 
 class MessagingPage(QWidget):
+    """SMS & EMAIL UI page."""
     def __init__(self, user):
+        """Build the sub-tabs and status bar."""
         super().__init__()
         self.user = user
         self.conn = Connections()                       # shared logins (memory only)
@@ -82,11 +72,13 @@ class MessagingPage(QWidget):
         layout.addWidget(self.stack, stretch=1)
 
     def set_badge(self, page, count):
+        """Unread number on a sub-tab."""
         badge = self.badges[page]
         badge.setText(str(count) if count < 100 else "99+")
         badge.setVisible(count > 0)
 
     def update_dots(self):
+        """EMAIL / SMS status dots."""
         for dot, name, on in ((self.email_dot, "EMAIL", self.conn.gmail),
                               (self.sms_dot, "SMS", self.conn.smsgate)):
             dot.setObjectName("dotOn" if on else "dotOff")
@@ -95,7 +87,7 @@ class MessagingPage(QWidget):
             dot.setToolTip(f"{name} is connected" if on else f"{name} is not connected")
 
     def clear_credentials(self):
-        """Called on logout: forget every login and everything loaded from Gmail."""
+        """Forget logins (logout)."""
         self.tracker.stop()
         self.compose.clear_credentials()
         self.chat.clear_credentials()

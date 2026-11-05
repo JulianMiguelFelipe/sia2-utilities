@@ -1,10 +1,4 @@
-"""
-database/db.py
-Handles the SQLite connection and creates all tables for the app.
-
-Run this file directly to create the database:
-    python -m database.db
-"""
+"""SQLite database: connection and tables."""
 
 import sqlite3
 from pathlib import Path
@@ -16,7 +10,7 @@ DB_PATH = DATA_DIR / "app.db"
 
 
 def get_connection():
-    """Open a connection to the SQLite database."""
+    """Open the database."""
     DATA_DIR.mkdir(exist_ok=True)              # create data/ if missing
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row             # access columns by name: row["username"]
@@ -25,7 +19,7 @@ def get_connection():
 
 
 def init_db():
-    """Create all tables if they don't exist yet."""
+    """Create the tables if missing."""
     conn = get_connection()
     cur = conn.cursor()
 

@@ -1,15 +1,4 @@
-"""
-ui/theme.py
-Dark mode and light mode.
-
-Every color in the app comes from one of the two palettes below. The
-stylesheet (styles.py) and the few screens that draw their own colors
-(chat bubbles, lists, the gear) read colors() and redraw when
-`theme_events.changed` fires.
-
-The choice is saved in the database (app_settings), so the app opens in the
-mode you used last.
-"""
+"""Dark mode and light mode colors."""
 
 from PySide6.QtCore import QObject, Signal
 
@@ -40,6 +29,7 @@ THEMES = {
 
 
 class _ThemeEvents(QObject):
+    """Theme-changed signal."""
     changed = Signal(str)
 
 
@@ -48,22 +38,24 @@ _state = {"name": "dark"}
 
 
 def current_theme():
+    """'dark' or 'light'."""
     return _state["name"]
 
 
 def colors():
-    """The current palette, e.g. colors()["red"]."""
+    """Current color palette."""
     return THEMES[_state["name"]]
 
 
 def status_color(status):
+    """Color for a message status."""
     c = colors()
     return {"queued": c["queued"], "sent": c["green"], "delivered": c["green"],
             "failed": c["red"]}.get(status, c["fg"])
 
 
 def set_theme(name, save=True):
-    """Switch to 'dark' or 'light', restyle everything, and remember it."""
+    """Switch theme and save it."""
     if name not in THEMES:
         name = "dark"
     _state["name"] = name
@@ -79,4 +71,5 @@ def set_theme(name, save=True):
 
 
 def toggle_theme():
+    """Dark <-> light."""
     set_theme("light" if current_theme() == "dark" else "dark")

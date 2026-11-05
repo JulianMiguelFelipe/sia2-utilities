@@ -1,9 +1,4 @@
-"""
-ui/account_dialog.py
-Pop-up windows from the gear menu: Change username, Change password.
-Both ask for your CURRENT password first, so nobody can change your account
-on a computer you left logged in.
-"""
+"""Change username / change password pop-ups."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
@@ -14,9 +9,10 @@ from ui.widgets import field_label, make_box, make_button, set_status
 
 
 class AccountDialog(QDialog):
-    """A bordered pop-up with labelled fields, an error line, SAVE and CANCEL."""
+    """Pop-up with fields, SAVE and CANCEL."""
 
     def __init__(self, parent, title, subtitle, fields):
+        """Build the pop-up."""
         super().__init__(parent)
         self.setWindowTitle("JD UTILS")
         self.setModal(True)
@@ -66,17 +62,22 @@ class AccountDialog(QDialog):
         first.setFocus(Qt.OtherFocusReason)
 
     def value(self, key):
+        """Text of one field."""
         return self.inputs[key].text()
 
     def show_error(self, text):
+        """Show a red error."""
         set_status(self.message, text)
 
     def save(self):
+        """Save (each dialog does its own)."""
         raise NotImplementedError
 
 
 class ChangeUsernameDialog(AccountDialog):
+    """Change username pop-up."""
     def __init__(self, parent, user):
+        """Build the fields."""
         super().__init__(parent, "CHANGE USERNAME",
                          f"You're signed in as {user['username']}. "
                          "3-20 letters, numbers or underscores.",
@@ -87,6 +88,7 @@ class ChangeUsernameDialog(AccountDialog):
         self.inputs["username"].selectAll()
 
     def save(self):
+        """Save the new username."""
         ok, msg = change_username(self.user["id"], self.value("username"), self.value("password"))
         if not ok:
             self.inputs["password"].clear()
@@ -96,7 +98,9 @@ class ChangeUsernameDialog(AccountDialog):
 
 
 class ChangePasswordDialog(AccountDialog):
+    """Change password pop-up."""
     def __init__(self, parent, user):
+        """Build the fields."""
         super().__init__(parent, "CHANGE PASSWORD",
                          "At least 8 characters, with a letter and a number. "
                          "It's saved as a new salted hash.",
@@ -106,6 +110,7 @@ class ChangePasswordDialog(AccountDialog):
         self.user = user
 
     def save(self):
+        """Save the new password."""
         ok, msg = change_password(self.user["id"], self.value("current"),
                                   self.value("new"), self.value("confirm"))
         if not ok:

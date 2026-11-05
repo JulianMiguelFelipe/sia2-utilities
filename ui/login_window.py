@@ -1,9 +1,4 @@
-"""
-ui/login_window.py
-Login screen: top bar, "Available Features" box, PNG art slot, and a login box.
-The login box swaps with the register box using QStackedWidget.
-When login succeeds, the window emits `login_success` with the user's info.
-"""
+"""Login window: info card, features, login and register forms."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -23,6 +18,7 @@ FEATURES = [
 
 
 def make_input(password=False):
+    """Text field (password optional)."""
     field = QLineEdit()
     field.setFixedHeight(30)
     if password:
@@ -31,14 +27,13 @@ def make_input(password=False):
 
 
 def set_message(label, text, success=False):
-    """Show a red error or green success message under the form."""
+    """Red error or green success text."""
     set_status(label, text, success)
 
 
 # ---------- Top bar ----------
-
 def make_top_bar():
-    """JD UTILS in the middle, the date and time on the right."""
+    """Top bar: JD UTILS + clock."""
     bar = make_box()
     layout = QGridLayout(bar)
     layout.setContentsMargins(12, 4, 12, 4)
@@ -48,8 +43,8 @@ def make_top_bar():
 
 
 # ---------- Available Features box ----------
-
 def make_features_box():
+    """AVAILABLE FEATURES box."""
     box = make_box()
     layout = QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 14, 12)
@@ -65,12 +60,13 @@ def make_features_box():
 
 
 # ---------- Login box ----------
-
 class LoginForm(QWidget):
+    """Login box."""
     login_success = Signal(dict)
     go_to_register = Signal()
 
     def __init__(self):
+        """Build the login box."""
         super().__init__()
         box = make_box()
 
@@ -108,6 +104,7 @@ class LoginForm(QWidget):
         outer.addWidget(box)
 
     def handle_login(self):
+        """ENTER NOW button."""
         user, msg = login_user(self.username.text(), self.password.text())
         if user:
             self.clear()
@@ -117,17 +114,19 @@ class LoginForm(QWidget):
             self.password.clear()
 
     def clear(self):
+        """Clear the fields."""
         self.username.clear()
         self.password.clear()
         self.message.clear()
 
 
 # ---------- Register box ----------
-
 class RegisterForm(QWidget):
+    """Register box."""
     go_to_login = Signal(str)     # carries a success message (or empty)
 
     def __init__(self):
+        """Build the register box."""
         super().__init__()
         box = make_box()
 
@@ -173,6 +172,7 @@ class RegisterForm(QWidget):
         outer.addWidget(box)
 
     def handle_register(self):
+        """SIGN UP button."""
         ok, msg = register_user(self.username.text(), self.password.text(),
                                 self.confirm.text())
         if ok:
@@ -182,15 +182,15 @@ class RegisterForm(QWidget):
             set_message(self.message, msg)
 
     def clear(self):
+        """Clear the fields."""
         for field in (self.username, self.password, self.confirm):
             field.clear()
         self.message.clear()
 
 
 # ---------- Whole window ----------
-
 def make_info_card():
-    """Who made the app and what it is."""
+    """JULIAN & DARWIN UTILITIES card."""
     box = make_box()
     layout = QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 14, 12)
@@ -198,8 +198,9 @@ def make_info_card():
     layout.addWidget(QLabel("JULIAN & DARWIN UTILITIES", objectName="boxTitleBordered"),
                      alignment=Qt.AlignLeft)
     layout.addSpacing(4)
-    about = QLabel("A python program made for our SIA 2 final term project. "
-                   "Built with Python, PySide6 and SQLite.",
+    about = QLabel("A desktop toolkit made for our SIA 2 final term mini project. "
+                   "Log in to shorten links, generate fake data, and send SMS and "
+                   "email, all from one app. Built with Python, PySide6 and SQLite.",
                    objectName="infoText")
     about.setWordWrap(True)
     layout.addWidget(about)
@@ -207,11 +208,15 @@ def make_info_card():
     return box
 
 
+# ---------- Whole window ----------
+
 class LoginWindow(ScalingWindow):
+    """The login window."""
     login_success = Signal(dict)
     BASE_SIZE = (900, 560)          # everything grows when the window is bigger
 
     def __init__(self):
+        """Build the window."""
         super().__init__()
         self.setWindowTitle("JD UTILS")
         self.resize(900, 560)
@@ -263,11 +268,13 @@ class LoginWindow(ScalingWindow):
         self.finish_scaling()
 
     def show_register(self):
+        """Switch to register."""
         self.login_form.clear()
         self.stack.setCurrentWidget(self.register_form)
         self.register_form.username.setFocus()
 
     def show_login(self, success_message=""):
+        """Switch to login."""
         self.register_form.clear()
         self.login_form.clear()
         if success_message:

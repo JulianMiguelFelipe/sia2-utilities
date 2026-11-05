@@ -1,7 +1,4 @@
-"""
-ui/dashboard.py
-Main window after login: top navigation bar with tabs + settings gear.
-"""
+"""Dashboard window: top bar, tabs, settings menu."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -18,9 +15,10 @@ from ui.widgets import ClockLabel, GearButton, make_box
 
 
 class ComingSoonPage(QWidget):
-    """Temporary page until the real feature is built."""
+    """Placeholder page."""
 
     def __init__(self, title, description):
+        """Build the page."""
         super().__init__()
         box = make_box()
         box.setFixedWidth(676)
@@ -44,17 +42,19 @@ class ComingSoonPage(QWidget):
 
 
 class Dashboard(ScalingWindow):
+    """Main window after login."""
     logout_requested = Signal()
     BASE_SIZE = (1000, 660)         # everything grows when the window is bigger
 
     def __init__(self, user):
+        """Build the top bar and pages."""
         super().__init__()
         self.user = user                       # {"id": ..., "username": ...}
         self.setWindowTitle("JD UTILS")
         self.resize(1000, 660)
         self.setMinimumSize(860, 540)
 
-        # ----- Pages -----
+        # ---------- Pages ----------
         self.stack = QStackedWidget()
         pages = [
             ("URL SHORTENER", UrlShortenerPage(user)),
@@ -64,7 +64,7 @@ class Dashboard(ScalingWindow):
         ]
         self.pages = [page for _, page in pages]
 
-        # ----- Top navigation bar -----
+        # ---------- Top navigation bar ----------
         nav = make_box()
         nav_layout = QHBoxLayout(nav)
         nav_layout.setContentsMargins(10, 4, 10, 4)
@@ -93,7 +93,7 @@ class Dashboard(ScalingWindow):
         nav_layout.addWidget(self.user_label)
         nav_layout.addWidget(self.make_gear_button())
 
-        # ----- Put it together -----
+        # ---------- Put it together ----------
         layout = QVBoxLayout(self.content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -102,14 +102,14 @@ class Dashboard(ScalingWindow):
         self.finish_scaling()
 
     def clear_session(self):
-        """Called on logout: every page forgets its passwords and keys."""
+        """Forget all logins (logout)."""
         for page in self.pages:
             if hasattr(page, "clear_credentials"):
                 page.clear_credentials()
 
-    # ================= Settings (gear) menu =================
-
+    # ---------- Settings (gear) menu ----------
     def make_gear_button(self):
+        """Settings gear and menu."""
         gear = GearButton()
         gear.setToolTip("Settings")
         gear.setPopupMode(QToolButton.InstantPopup)
@@ -119,6 +119,10 @@ class Dashboard(ScalingWindow):
         self.who.setEnabled(False)
         menu.addSeparator()
         self.theme_action = menu.addAction("", toggle_theme)
+        menu.addSeparator()
+        messaging = self.pages[2]
+        menu.addAction(messaging.chat.only_ours)       # privacy filters (checkable)
+        menu.addAction(messaging.inbox.only_ours)
         menu.addSeparator()
         menu.addAction("Change username", self.change_username)
         menu.addAction("Change password", self.change_password)
@@ -130,17 +134,20 @@ class Dashboard(ScalingWindow):
         return gear
 
     def update_menu(self):
+        """Refresh menu labels."""
         self.who.setText(f"Signed in as {self.user['username']}")
         self.theme_action.setText("Switch to light mode" if current_theme() == "dark"
                                   else "Switch to dark mode")
 
     def change_username(self):
+        """Open Change username."""
         if ChangeUsernameDialog(self, self.user).exec():
             self.user_label.setText(self.user["username"])
             QMessageBox.information(self, "JD UTILS",
                                     f"Your username is now {self.user['username']}.")
 
     def change_password(self):
+        """Open Change password."""
         if ChangePasswordDialog(self, self.user).exec():
             QMessageBox.information(self, "JD UTILS",
                                     "Password changed. Use the new one next time you log in.")

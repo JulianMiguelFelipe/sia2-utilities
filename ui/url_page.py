@@ -1,15 +1,4 @@
-"""
-ui/url_page.py
-URL Shortener page.
-
-  Top:     LONG URL (with a live character counter and PASTE), START,
-           SHORT URL with COPY and OPEN, and how many characters it saved
-  Bottom:  HISTORY you can search, copy from, open, and delete
-           (double-click a row to copy its short link)
-
-Shortening the same link twice reuses the saved short link, so it works
-instantly and without internet.
-"""
+"""URL Shortener page."""
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -28,6 +17,7 @@ from ui.workers import run_in_background
 
 
 def make_field(placeholder="", read_only=False):
+    """Text field."""
     field = QLineEdit()
     field.setFixedHeight(32)
     field.setPlaceholderText(placeholder)
@@ -36,6 +26,7 @@ def make_field(placeholder="", read_only=False):
 
 
 def savings_text(long_url, short_url):
+    """'49 -> 28 characters' line."""
     saved = len(long_url) - len(short_url)
     if saved <= 0:
         return f"{len(long_url)} → {len(short_url)} characters (this link was already short)"
@@ -44,7 +35,9 @@ def savings_text(long_url, short_url):
 
 
 class UrlShortenerPage(QWidget):
+    """URL Shortener page."""
     def __init__(self, user):
+        """Build the page."""
         super().__init__()
         self.user = user
         self.history = []
@@ -56,9 +49,9 @@ class UrlShortenerPage(QWidget):
         layout.addWidget(self.build_history_box(), stretch=1)
         self.refresh()
 
-    # ================= Shortening =================
-
+    # ---------- Shortening ----------
     def build_form_box(self):
+        """Shortening box."""
         box = make_box()
 
         self.long_url = make_field("Paste a long link, e.g. https://example.com/a/very/long/link")
@@ -114,17 +107,21 @@ class UrlShortenerPage(QWidget):
         return box
 
     def update_counter(self):
+        """Character counter."""
         n = len(self.long_url.text().strip())
         self.counter.setText(f"{n} character{'s' if n != 1 else ''}")
 
     def paste(self):
+        """PASTE button."""
         self.long_url.setText(QApplication.clipboard().text().strip())
         self.long_url.setFocus()
 
     def show_message(self, text, success=False):
+        """Status message."""
         set_status(self.message, text, success)
 
     def handle_shorten(self):
+        """START button."""
         self.short_url.clear()
         self.savings.clear()
         try:
@@ -151,10 +148,12 @@ class UrlShortenerPage(QWidget):
                           on_error=self.shorten_failed)
 
     def finish(self):
+        """Reset the START button."""
         self.start_btn.setEnabled(True)
         self.start_btn.setText("START")
 
     def shorten_done(self, url, short):
+        """Short link received."""
         self.finish()
         self.short_url.setText(short)
         save_short_url(self.user["id"], url, short)
@@ -163,24 +162,27 @@ class UrlShortenerPage(QWidget):
         self.refresh()
 
     def shorten_failed(self, err):
+        """Shortening failed."""
         self.finish()
         self.show_message(str(err) if isinstance(err, ConnectionError)
                           else "Something went wrong. Try again.")
 
     def copy(self, link):
+        """COPY button."""
         if not link:
             return self.show_message("Shorten a link first.")
         QApplication.clipboard().setText(link)
         self.show_message(f"Copied {link}", success=True)
 
     def open_link(self, link):
+        """OPEN button."""
         if not link:
             return self.show_message("Shorten a link first.")
         QDesktopServices.openUrl(QUrl(link))              # opens in your browser
 
-    # ================= History =================
-
+    # ---------- History ----------
     def build_history_box(self):
+        """HISTORY box."""
         box = make_box()
 
         self.search = make_field("Search links")
@@ -230,10 +232,12 @@ class UrlShortenerPage(QWidget):
         return box
 
     def refresh(self):
+        """Reload the history."""
         self.history = get_history(self.user["id"])
         self.show_history()
 
     def show_history(self):
+        """Draw the history table."""
         query = self.search.text().strip().lower()
         rows = [h for h in self.history
                 if not query or query in h["original_url"].lower() or query in h["short_url"].lower()]
@@ -250,10 +254,12 @@ class UrlShortenerPage(QWidget):
                 self.table.setItem(r, c, item)
 
     def selected_short(self):
+        """Selected short link."""
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
         return self.table.item(rows[0], 1).text() if rows else ""
 
     def select_in_history(self, row_id):
+        """Highlight a history row."""
         self.search.clear()
         for r in range(self.table.rowCount()):
             if self.table.item(r, 0).data(Qt.UserRole) == row_id:
@@ -262,6 +268,7 @@ class UrlShortenerPage(QWidget):
                 return
 
     def handle_delete(self):
+        """DELETE SELECTED button."""
         rows = {i.row() for i in self.table.selectedIndexes()}
         if not rows:
             return self.show_message("Select a link in the history first.")
@@ -269,6 +276,7 @@ class UrlShortenerPage(QWidget):
         self.refresh()
 
     def handle_clear_all(self):
+        """CLEAR ALL button."""
         if not self.history:
             return
         answer = QMessageBox.question(self, "JD UTILS", "Delete your whole link history?")

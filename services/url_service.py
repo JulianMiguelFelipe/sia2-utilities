@@ -1,8 +1,4 @@
-"""
-services/url_service.py
-URL Shortener logic: validate, shorten with TinyURL, save history.
-No GUI code here.
-"""
+"""URL Shortener: validate, shorten with TinyURL, history."""
 
 import re
 from urllib.parse import urlparse
@@ -13,7 +9,7 @@ from database.db import get_connection
 
 
 def normalize_url(url):
-    """Clean up and validate a URL. Raises ValueError if it's not valid."""
+    """Clean up and check a URL."""
     url = url.strip()
     if not url:
         raise ValueError("Please enter a URL.")
@@ -28,7 +24,7 @@ def normalize_url(url):
 
 
 def shorten_url(url):
-    """Return a TinyURL short link. Needs an internet connection."""
+    """Get a TinyURL short link."""
     try:
         return pyshorteners.Shortener(timeout=10).tinyurl.short(url)
     except Exception:
@@ -36,6 +32,7 @@ def shorten_url(url):
 
 
 def save_short_url(user_id, original_url, short_url):
+    """Save a link to history."""
     conn = get_connection()
     conn.execute(
         "INSERT INTO short_urls (user_id, original_url, short_url) VALUES (?, ?, ?)",
@@ -46,7 +43,7 @@ def save_short_url(user_id, original_url, short_url):
 
 
 def find_existing(user_id, original_url):
-    """If this user already shortened this exact link, return that row (else None)."""
+    """Link already shortened?"""
     conn = get_connection()
     row = conn.execute(
         "SELECT id, original_url, short_url, created_at FROM short_urls "
@@ -58,6 +55,7 @@ def find_existing(user_id, original_url):
 
 
 def delete_short_urls(user_id, ids):
+    """Delete selected links."""
     conn = get_connection()
     conn.executemany("DELETE FROM short_urls WHERE id = ? AND user_id = ?",
                      [(i, user_id) for i in ids])
@@ -66,6 +64,7 @@ def delete_short_urls(user_id, ids):
 
 
 def clear_short_urls(user_id):
+    """Delete all links."""
     conn = get_connection()
     conn.execute("DELETE FROM short_urls WHERE user_id = ?", (user_id,))
     conn.commit()
@@ -73,7 +72,7 @@ def clear_short_urls(user_id):
 
 
 def get_stats(user_id):
-    """How many links, and how many characters the short links saved in total."""
+    """Link count and characters saved."""
     conn = get_connection()
     row = conn.execute(
         "SELECT COUNT(*) AS links, "
@@ -86,7 +85,7 @@ def get_stats(user_id):
 
 
 def get_history(user_id):
-    """All links this user has shortened, newest first."""
+    """This user's links, newest first."""
     conn = get_connection()
     rows = conn.execute(
         "SELECT id, original_url, short_url, created_at FROM short_urls "
