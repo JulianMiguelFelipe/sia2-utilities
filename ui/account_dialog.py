@@ -1,21 +1,24 @@
-"""Change username / change password pop-ups."""
+"""Pop-up windows for changing the username or password (from the gear menu).
+
+AccountDialog builds the shared layout: title, hint, labelled fields, an error
+line and SAVE / CANCEL. The two subclasses only list their fields and say what
+SAVE does. The real checks happen in auth/auth.py.
+"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
 
-from auth.auth import change_password, change_username
+from auth.auth import change_password, change_username, key_for
 from ui.scaling import current_scale
 from ui.widgets import field_label, make_box, make_button, set_status
 
 
 class AccountDialog(QDialog):
-    """Pop-up with fields, SAVE and CANCEL."""
-
     def __init__(self, parent, title, subtitle, fields):
-        """Build the pop-up."""
         super().__init__(parent)
         self.setWindowTitle("JD UTILS")
         self.setModal(True)
+        # Dialogs aren't part of the scaling capture, so they size themselves from the current scale.
         s = current_scale()
         self.setMinimumWidth(round(380 * s))
 
@@ -62,22 +65,18 @@ class AccountDialog(QDialog):
         first.setFocus(Qt.OtherFocusReason)
 
     def value(self, key):
-        """Text of one field."""
         return self.inputs[key].text()
 
     def show_error(self, text):
-        """Show a red error."""
         set_status(self.message, text)
 
+    # Each subclass decides what SAVE does.
     def save(self):
-        """Save (each dialog does its own)."""
         raise NotImplementedError
 
 
 class ChangeUsernameDialog(AccountDialog):
-    """Change username pop-up."""
     def __init__(self, parent, user):
-        """Build the fields."""
         super().__init__(parent, "CHANGE USERNAME",
                          f"You're signed in as {user['username']}. "
                          "3-20 letters, numbers or underscores.",
@@ -88,19 +87,17 @@ class ChangeUsernameDialog(AccountDialog):
         self.inputs["username"].selectAll()
 
     def save(self):
-        """Save the new username."""
         ok, msg = change_username(self.user["id"], self.value("username"), self.value("password"))
         if not ok:
             self.inputs["password"].clear()
             return self.show_error(msg)
-        self.user["username"] = self.value("username").strip()   # every page shares this dict
+        # Every page holds this same dict, so the new name appears everywhere.
+        self.user["username"] = self.value("username").strip()
         self.accept()
 
 
 class ChangePasswordDialog(AccountDialog):
-    """Change password pop-up."""
     def __init__(self, parent, user):
-        """Build the fields."""
         super().__init__(parent, "CHANGE PASSWORD",
                          "At least 8 characters, with a letter and a number. "
                          "It's saved as a new salted hash.",
@@ -110,9 +107,10 @@ class ChangePasswordDialog(AccountDialog):
         self.user = user
 
     def save(self):
-        """Save the new password."""
         ok, msg = change_password(self.user["id"], self.value("current"),
                                   self.value("new"), self.value("confirm"))
         if not ok:
             return self.show_error(msg)
+        # The saved logins are now locked with the new password, so update the session key.
+        self.user["key"] = key_for(self.user["id"], self.value("new"))
         self.accept()

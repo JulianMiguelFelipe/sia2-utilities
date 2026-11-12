@@ -1,4 +1,9 @@
-"""Start the app: python main.py"""
+"""JD UTILS entry point. Run with: python main.py
+
+Creates the database, applies the saved light/dark theme, then shows the login
+window. After a successful login, App swaps the login window for the dashboard,
+and swaps back on logout.
+"""
 
 import sys
 
@@ -11,33 +16,30 @@ from services.settings_service import get_setting
 from ui.theme import set_theme
 
 
+# Decides which window is on screen: the login window or the dashboard.
 class App:
-    """Switches between the login window and the dashboard."""
-
     def __init__(self):
-        """Create the login window."""
         self.login_window = LoginWindow()
         self.login_window.login_success.connect(self.open_dashboard)
         self.dashboard = None
 
     def start(self):
-        """Show the login window."""
         self.login_window.show()
 
     def open_dashboard(self, user):
-        """Open the dashboard after login."""
         self.dashboard = Dashboard(user)
         self.dashboard.logout_requested.connect(self.logout)
-        if self.login_window.isMaximized():      # keep the same window size
+        if self.login_window.isMaximized():
             self.dashboard.showMaximized()
         else:
             self.dashboard.show()
         self.login_window.hide()
 
+    # Logout clears the logins held in memory (saved logins stay in the database),
+    # closes the dashboard and goes back to the login screen, keeping the same window size.
     def logout(self):
-        """Close the dashboard and go back to login."""
         was_maximized = self.dashboard.isMaximized()
-        self.dashboard.clear_session()      # wipe Email/SMS credentials from memory
+        self.dashboard.clear_session()
         self.dashboard.close()
         self.dashboard.deleteLater()
         self.dashboard = None
@@ -49,10 +51,10 @@ class App:
 
 
 def main():
-    """Start the database, theme and windows."""
-    init_db()                       # make sure the database and tables exist
+    # Create data/app.db and any missing tables before anything reads from it.
+    init_db()
     qt_app = QApplication(sys.argv)
-    set_theme(get_setting("theme", "dark"), save=False)   # open in the last mode used
+    set_theme(get_setting("theme", "dark"), save=False)
     app = App()
     app.start()
     sys.exit(qt_app.exec())

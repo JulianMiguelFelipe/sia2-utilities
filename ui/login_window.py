@@ -1,4 +1,10 @@
-"""Login window: info card, features, login and register forms."""
+"""The first window: log in or create an account.
+
+Left side: an about card, the feature list and artwork. Right side: a
+QStackedWidget that switches between LoginForm and RegisterForm. The checks
+(password rules, hashing, duplicate usernames) live in auth/auth.py; this file
+only shows the forms and the messages they return.
+"""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -18,22 +24,18 @@ FEATURES = [
 
 
 def make_input(password=False):
-    """Text field (password optional)."""
     field = QLineEdit()
     field.setFixedHeight(30)
     if password:
-        field.setEchoMode(QLineEdit.Password)      # show dots instead of text
+        field.setEchoMode(QLineEdit.Password)
     return field
 
 
 def set_message(label, text, success=False):
-    """Red error or green success text."""
     set_status(label, text, success)
 
 
-# ---------- Top bar ----------
 def make_top_bar():
-    """Top bar: JD UTILS + clock."""
     bar = make_box()
     layout = QGridLayout(bar)
     layout.setContentsMargins(12, 4, 12, 4)
@@ -42,9 +44,7 @@ def make_top_bar():
     return bar
 
 
-# ---------- Available Features box ----------
 def make_features_box():
-    """AVAILABLE FEATURES box."""
     box = make_box()
     layout = QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 14, 12)
@@ -59,14 +59,13 @@ def make_features_box():
     return box
 
 
-# ---------- Login box ----------
+# Login form. A successful login emits login_success(user), which main.py uses to
+# open the dashboard.
 class LoginForm(QWidget):
-    """Login box."""
     login_success = Signal(dict)
     go_to_register = Signal()
 
     def __init__(self):
-        """Build the login box."""
         super().__init__()
         box = make_box()
 
@@ -77,8 +76,9 @@ class LoginForm(QWidget):
 
         enter_btn = make_button("ENTER NOW", "primary", width=150)
         enter_btn.clicked.connect(self.handle_login)
+        # Enter in USERNAME jumps to PASSWORD; Enter in PASSWORD logs in.
         self.username.returnPressed.connect(self.password.setFocus)
-        self.password.returnPressed.connect(self.handle_login)   # Enter key logs in
+        self.password.returnPressed.connect(self.handle_login)
 
         create_btn = make_button("CREATE AN ACCOUNT", "secondary")
         create_btn.clicked.connect(self.go_to_register.emit)
@@ -104,29 +104,26 @@ class LoginForm(QWidget):
         outer.addWidget(box)
 
     def handle_login(self):
-        """ENTER NOW button."""
         user, msg = login_user(self.username.text(), self.password.text())
         if user:
             self.clear()
             self.login_success.emit(user)
         else:
             set_message(self.message, msg)
+            # Clear only the password so the user doesn't have to retype the username.
             self.password.clear()
 
     def clear(self):
-        """Clear the fields."""
         self.username.clear()
         self.password.clear()
         self.message.clear()
 
 
-# ---------- Register box ----------
+# Sign-up form. On success it goes back to the login form with a green message.
 class RegisterForm(QWidget):
-    """Register box."""
-    go_to_login = Signal(str)     # carries a success message (or empty)
+    go_to_login = Signal(str)
 
     def __init__(self):
-        """Build the register box."""
         super().__init__()
         box = make_box()
 
@@ -172,7 +169,6 @@ class RegisterForm(QWidget):
         outer.addWidget(box)
 
     def handle_register(self):
-        """SIGN UP button."""
         ok, msg = register_user(self.username.text(), self.password.text(),
                                 self.confirm.text())
         if ok:
@@ -182,15 +178,12 @@ class RegisterForm(QWidget):
             set_message(self.message, msg)
 
     def clear(self):
-        """Clear the fields."""
         for field in (self.username, self.password, self.confirm):
             field.clear()
         self.message.clear()
 
 
-# ---------- Whole window ----------
 def make_info_card():
-    """JULIAN & DARWIN UTILITIES card."""
     box = make_box()
     layout = QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 14, 12)
@@ -198,9 +191,8 @@ def make_info_card():
     layout.addWidget(QLabel("JULIAN & DARWIN UTILITIES", objectName="boxTitleBordered"),
                      alignment=Qt.AlignLeft)
     layout.addSpacing(4)
-    about = QLabel("A desktop toolkit made for our SIA 2 final term mini project. "
-                   "Log in to shorten links, generate fake data, and send SMS and "
-                   "email, all from one app. Built with Python, PySide6 and SQLite.",
+    about = QLabel("A python program made for our SIA 2 final term project. "
+                   "Built with Python, PySide6 and SQLite.",
                    objectName="infoText")
     about.setWordWrap(True)
     layout.addWidget(about)
@@ -208,21 +200,17 @@ def make_info_card():
     return box
 
 
-# ---------- Whole window ----------
-
+# BASE_SIZE is this window's design size for scaling (see ui/scaling.py).
 class LoginWindow(ScalingWindow):
-    """The login window."""
     login_success = Signal(dict)
-    BASE_SIZE = (900, 560)          # everything grows when the window is bigger
+    BASE_SIZE = (900, 560)
 
     def __init__(self):
-        """Build the window."""
         super().__init__()
         self.setWindowTitle("JD UTILS")
         self.resize(900, 560)
         self.setMinimumSize(820, 520)
 
-        # Left column: info card + features box + art
         art = ImageSlot("login_art.png", min_width=200, min_height=110)
         art.setFixedWidth(245)
         art_row = QHBoxLayout()
@@ -236,7 +224,6 @@ class LoginWindow(ScalingWindow):
         left.addWidget(make_features_box())
         left.addLayout(art_row, stretch=1)
 
-        # Right column: login / register (swappable)
         self.login_form = LoginForm()
         self.register_form = RegisterForm()
         self.stack = QStackedWidget()
@@ -268,13 +255,11 @@ class LoginWindow(ScalingWindow):
         self.finish_scaling()
 
     def show_register(self):
-        """Switch to register."""
         self.login_form.clear()
         self.stack.setCurrentWidget(self.register_form)
         self.register_form.username.setFocus()
 
     def show_login(self, success_message=""):
-        """Switch to login."""
         self.register_form.clear()
         self.login_form.clear()
         if success_message:

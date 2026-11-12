@@ -1,4 +1,7 @@
-"""Reusable widgets: boxes, buttons, image slot, gear, clock."""
+"""Small building blocks shared by every page, so the whole app looks the same:
+white-bordered boxes, red/white buttons, field labels, status messages, the
+settings gear icon, image slots and the live clock.
+"""
 
 from pathlib import Path
 
@@ -11,17 +14,16 @@ from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QSizePolicy, QToolBut
 from ui.theme import colors, current_theme, theme_events
 from ui.signals import connect_alive
 
-# Put your PNG art in: assets/images/
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "assets" / "images"
 
 
+# A white-bordered box; its look comes from QFrame#box in styles.py.
 def make_box():
-    """Bordered box."""
     return QFrame(objectName="box")
 
 
+# kind is "primary" (red) or "secondary" (white); styles.py colors them by objectName.
 def make_button(text, kind="primary", width=None):
-    """Red or white button."""
     btn = QPushButton(text, objectName=kind)
     btn.setCursor(Qt.PointingHandCursor)
     if width:
@@ -30,21 +32,21 @@ def make_button(text, kind="primary", width=None):
 
 
 def field_label(text):
-    """Small bold label."""
     return QLabel(text, objectName="fieldLabel")
 
 
+# Turns a label into a red error or a green success message. polish() makes Qt
+# re-read the stylesheet after the objectName changes.
 def set_status(label, text, success=False):
-    """Red error or green success text."""
     label.setObjectName("success" if success else "error")
-    label.style().polish(label)              # re-apply the color
+    label.style().polish(label)
     label.setText(text)
 
 
-# ---------- Flat gear icon (drawn in code, no image file needed) ----------
+# Draws the settings gear with QPainterPath (a body circle plus teeth, minus a hole)
+# instead of using an image file. Drawn at 3x size so it stays sharp on high-DPI screens.
 def gear_icon(color, size=24, teeth=8):
-    """Draw the gear icon."""
-    scale = 3                                 # draw big so it stays sharp
+    scale = 3
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.fill(Qt.transparent)
 
@@ -72,11 +74,9 @@ def gear_icon(color, size=24, teeth=8):
     return QIcon(pixmap)
 
 
+# Gear button that turns red on hover and redraws itself when the theme changes.
 class GearButton(QToolButton):
-    """Settings gear button."""
-
     def __init__(self, size=24):
-        """Build the button."""
         super().__init__(objectName="gear")
         self.icon_size = size
         self.make_icons()
@@ -85,27 +85,23 @@ class GearButton(QToolButton):
         connect_alive(theme_events.changed, self, lambda _t: self.make_icons())
 
     def make_icons(self):
-        """Gear icons for the theme."""
         self.normal_icon = gear_icon(colors()["fg"], self.icon_size)
         self.hover_icon = gear_icon(colors()["red"], self.icon_size)
         self.setIcon(self.normal_icon)
 
     def enterEvent(self, event):
-        """Red on hover."""
         self.setIcon(self.hover_icon)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        """Normal color."""
         self.setIcon(self.normal_icon)
         super().leaveEvent(event)
 
 
+# Shows a PNG from assets/images, scaled to fit. In light mode it uses name_light.png
+# if that file exists. A missing file shows an orange placeholder instead of crashing.
 class ImageSlot(QLabel):
-    """PNG art slot (or orange placeholder)."""
-
     def __init__(self, filename, min_width=100, min_height=100):
-        """Build the slot."""
         super().__init__()
         self.filename = filename
         self.setMinimumSize(min_width, min_height)
@@ -116,7 +112,6 @@ class ImageSlot(QLabel):
         connect_alive(theme_events.changed, self, lambda _t: self.load())
 
     def load(self):
-        """Load the PNG for the theme."""
         path = IMAGES_DIR / self.filename
         if current_theme() == "light":
             light = path.with_name(f"{path.stem}_light{path.suffix}")
@@ -135,10 +130,8 @@ class ImageSlot(QLabel):
         self.update()
 
     def paintEvent(self, event):
-        """Draw the image, centered."""
         if self.pixmap_data is None:
             return super().paintEvent(event)
-        # Draw the image centered, keeping its proportions
         scaled = self.pixmap_data.scaled(self.size(), Qt.KeepAspectRatio,
                                          Qt.SmoothTransformation)
         painter = QPainter(self)
@@ -146,11 +139,9 @@ class ImageSlot(QLabel):
                            (self.height() - scaled.height()) // 2, scaled)
 
 
+# Live date and time in the header, updated every second by a QTimer.
 class ClockLabel(QLabel):
-    """Live date and time."""
-
     def __init__(self):
-        """Start the clock."""
         super().__init__(objectName="headerInfo")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
@@ -158,7 +149,6 @@ class ClockLabel(QLabel):
         self.tick()
 
     def tick(self):
-        """Update the time."""
         now = datetime.now()
         date = f"{now.strftime('%a, %b')} {now.day}, {now.year}"
         time = now.strftime("%I:%M:%S %p").lstrip("0")

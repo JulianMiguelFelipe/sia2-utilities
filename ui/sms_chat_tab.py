@@ -1,4 +1,11 @@
-"""SMS CHAT sub-tab: conversations and chat bubbles."""
+"""Feature 3: SMS CHAT sub-tab, a messenger-style view of text conversations.
+
+Left: the conversation list with unread dots and search. Right: the chat bubbles
+and a reply box. While SMS is connected, the phone's inbox is checked every 5
+seconds for replies (services/sms_chat_service.py decides what gets saved).
+Bubbles are built as HTML in a QTextBrowser, so their colors and sizes follow
+the theme and window scale.
+"""
 
 import html
 import re
@@ -28,28 +35,26 @@ INBOX_CHECK_MS = 5000
 
 
 def _short(text, limit=34):
-    """Shorten text with an ellipsis."""
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 class SmsChatTab(QWidget):
-    """SMS CHAT sub-tab."""
     unread_changed = Signal(int)
 
     def __init__(self, user, connections, tracker):
-        """Build the tab."""
         super().__init__()
         self.user = user
         self.conn = connections
         self.tracker = tracker
-        self.current = None              # phone number of the open chat
+        self.current = None
         self.checking_inbox = False
         self.inbox_unsupported = False
         self.sending = False
-        self.outside = {}                # texts from people you haven't texted (memory only)
-        self.seen_outside = set()        # keys of those you've already looked at
-        self.hidden = set()              # numbers whose chat you deleted this session
+        # Texts from numbers outside JD UTILS. Kept in memory only, never saved.
+        self.outside = {}
+        self.seen_outside = set()
+        self.hidden = set()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -63,18 +68,19 @@ class SmsChatTab(QWidget):
 
         connections.changed.connect(self.connection_changed)
         tracker.updated.connect(self.refresh)
+        # Rebuild the list and bubbles when the window rescales or the theme changes,
+        # since their sizes and colors are written into the HTML.
         connect_alive(scale_events.changed, self, lambda _s: self.refresh())
         connect_alive(theme_events.changed, self, lambda _t: self.refresh())
         self.connection_changed()
         self.refresh()
 
-    # ---------- LEFT: conversations ----------
     def build_list_box(self):
-        """CONVERSATIONS box."""
         box = make_box()
         box.setFixedWidth(300)
 
-        self.only_ours = QAction("SMS Chat: only people I texted", self)   # in the gear menu
+        # This option lives in the gear menu (dashboard.py) but is owned here.
+        self.only_ours = QAction("SMS Chat: only people I texted", self)
         self.only_ours.setCheckable(True)
         self.only_ours.setChecked(True)
         self.only_ours.toggled.connect(self.filter_changed)
@@ -106,8 +112,8 @@ class SmsChatTab(QWidget):
         layout.addWidget(self.list_status)
         return box
 
+    # Saved conversations plus the in-memory texts from outside numbers.
     def conversations(self):
-        """Saved + unsaved conversations."""
         convos = {c["phone"]: c for c in list_conversations(self.user["id"])}
         for t in sorted(self.outside.values(), key=lambda t: t["at"]):
             c = convos.setdefault(t["phone"], {"phone": t["phone"], "name": None, "unread": 0,
@@ -119,13 +125,13 @@ class SmsChatTab(QWidget):
         return sorted(convos.values(), key=lambda c: c["last_at"] or "9999", reverse=True)
 
     def refresh_list(self):
-        """Draw the conversation list."""
         convos = self.conversations()
         query = self.search.text().strip().lower()
         if query:
+            # Search works with names, "+639..." or "09..." (a leading 0 is turned into 63).
             digits = re.sub(r"\D", "", query)
             if digits.startswith("0"):
-                digits = "63" + digits[1:]                 # 0954... -> 63954...
+                digits = "63" + digits[1:]
             convos = [c for c in convos
                       if query in (c["name"] or "").lower() or query in c["phone"].lower()
                       or (digits and digits in re.sub(r"\D", "", c["phone"]))]
@@ -134,14 +140,16 @@ class SmsChatTab(QWidget):
         for c in convos:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, c["phone"])
+            # Each list row is a QLabel with rich text so it can mix bold names, gray numbers
+            # and a red unread dot.
             label = QLabel(self.list_item_html(c))
             label.setTextFormat(Qt.RichText)
-            label.setAttribute(Qt.WA_TransparentForMouseEvents)   # clicks go to the list
+            label.setAttribute(Qt.WA_TransparentForMouseEvents)
             pad = round(8 * current_scale())
             label.setContentsMargins(pad + 2, pad, pad + 2, pad)
             self.list.addItem(item)
             self.list.setItemWidget(item, label)
-            label.ensurePolished()                        # apply the stylesheet font first
+            label.ensurePolished()
             lines = 3 if c["name"] or c.get("outside") else 2
             height = lines * QFontMetrics(label.font()).lineSpacing() + 2 * pad
             item.setSizeHint(QSize(0, height + round(12 * current_scale())))
@@ -150,8 +158,8 @@ class SmsChatTab(QWidget):
         self.unread_changed.emit(sum(c["unread"] for c in self.conversations()))
 
     @staticmethod
+    # HTML for one conversation row: name, time, number and a preview of the last text.
     def list_item_html(c):
-        """One conversation in the list."""
         p = colors()
         name = html.escape(c["name"] or c["phone"])
         when = friendly_time(c["last_at"])
@@ -173,7 +181,6 @@ class SmsChatTab(QWidget):
                 f"{number}<br>{preview}")
 
     def start_new_chat(self):
-        """+ NEW CHAT button."""
         phone = normalize_phone(self.new_number.text())
         if not phone:
             return set_status(self.list_status, "Enter a valid mobile number (09XXXXXXXXX).")
@@ -183,9 +190,7 @@ class SmsChatTab(QWidget):
         self.open_chat(phone)
         self.message.setFocus()
 
-    # ---------- RIGHT: the chat ----------
     def build_chat_box(self):
-        """Chat box."""
         box = make_box()
 
         self.title = QLabel("", objectName="sectionTitle")
@@ -245,8 +250,8 @@ class SmsChatTab(QWidget):
         layout.addWidget(bottom_box)
         return box
 
+    # Opening a chat marks it as read, which clears its unread dot and badge.
     def open_chat(self, phone):
-        """Open a conversation."""
         self.current = phone
         if normalize_phone(phone):
             mark_read(self.user["id"], phone)
@@ -254,14 +259,12 @@ class SmsChatTab(QWidget):
         self.refresh()
 
     def refresh(self):
-        """Redraw list and chat."""
         self.refresh_list()
         self.refresh_chat()
 
     def refresh_chat(self):
-        """Draw the open chat."""
         has_chat = self.current is not None
-        can_reply = has_chat and normalize_phone(self.current) is not None   # not "GCash" etc.
+        can_reply = has_chat and normalize_phone(self.current) is not None
         for w in (self.rename_btn, self.message, self.send_btn):
             w.setEnabled(can_reply and not self.sending)
         self.delete_btn.setEnabled(has_chat and not self.sending)
@@ -282,18 +285,19 @@ class SmsChatTab(QWidget):
         texts.sort(key=lambda t: (t["at"], -t["mine"]))
         self.view.setHtml(self.thread_html(texts) if texts
                           else self.empty_html("No messages yet. Say hi!"))
+        # Scroll to the newest message after Qt finishes laying out the HTML.
         QTimer.singleShot(0, lambda: self.view.verticalScrollBar().setValue(
             self.view.verticalScrollBar().maximum()))
 
     @staticmethod
     def empty_html(text):
-        """Empty chat message."""
         size = round(13 * current_scale())
         return (f"<div style='color:{colors()['muted2']}; font-size:{size}px' align='center'>"
                 f"<br><br>{html.escape(text)}</div>")
 
+    # Chat bubbles: mine on the right (with the status color and time), theirs on the left,
+    # with a date label whenever the day changes.
     def thread_html(self, texts):
-        """Chat bubbles."""
         s, p = current_scale(), colors()
         body, small, pad = round(13 * s), round(10.5 * s), round(8 * s)
         parts, last_day = [], None
@@ -328,12 +332,10 @@ class SmsChatTab(QWidget):
         return "".join(parts)
 
     def update_counter(self):
-        """Character counter."""
         self.counter.setText(f"{len(self.message.text())} / {SMS_MAX_LENGTH}")
 
-    # ---------- Sending ----------
+    # Replying from the chat uses the same send_sms and status tracker as COMPOSE.
     def send(self):
-        """SEND button."""
         body = self.message.text().strip()
         if not self.current or not body or self.sending:
             return
@@ -348,15 +350,13 @@ class SmsChatTab(QWidget):
                           on_error=lambda err: self.send_failed(phone, body, err))
 
     def finish_sending(self):
-        """Reset the SEND button."""
         self.sending = False
         self.send_btn.setText("SEND")
 
     def sent(self, phone, body, result):
-        """SMS accepted by the phone."""
         gateway_id, status, error, config = result
         if self.conn.smsgate:
-            self.conn.smsgate = config               # remember the API path that worked
+            self.conn.smsgate = config
         row_id = log_message(self.user["id"], "sms", phone, "", body, status, gateway_id, error)
         if status == "queued" and gateway_id:
             self.tracker.track(row_id, gateway_id)
@@ -367,15 +367,12 @@ class SmsChatTab(QWidget):
         self.message.setFocus()
 
     def send_failed(self, phone, body, err):
-        """Sending failed."""
         log_message(self.user["id"], "sms", phone, "", body, "failed", error=friendly(err))
         self.finish_sending()
         set_status(self.status, friendly(err))
         self.refresh()
 
-    # ---------- Rename / delete ----------
     def rename(self):
-        """RENAME button."""
         if not self.current:
             return
         name, ok = QInputDialog.getText(self, "Rename", f"Name for {self.current}:",
@@ -385,7 +382,6 @@ class SmsChatTab(QWidget):
             self.refresh()
 
     def delete_chat(self):
-        """DELETE CHAT button."""
         if not self.current:
             return
         answer = QMessageBox.question(
@@ -399,9 +395,8 @@ class SmsChatTab(QWidget):
             self.current = None
             self.refresh()
 
-    # ---------- Receiving replies ----------
+    # Start or stop checking the phone's inbox when SMS connects or disconnects.
     def connection_changed(self):
-        """SMS connected or not."""
         if self.conn.smsgate:
             self.inbox_unsupported = False
             self.inbox_timer.start()
@@ -411,7 +406,6 @@ class SmsChatTab(QWidget):
         self.show_listening_status()
 
     def show_listening_status(self):
-        """Status line under the chat."""
         if not self.conn.smsgate:
             set_status(self.status, "SMS isn't connected. Connect it in COMPOSE to send and receive.")
         elif self.inbox_unsupported:
@@ -426,14 +420,15 @@ class SmsChatTab(QWidget):
                 self.status.setText("Showing texts from everyone (last 7 days, not saved). "
                                     "Change this in Settings (gear).")
 
+    # Asks the phone for new texts. checking_inbox stops a second request from starting
+    # before the first one has answered.
     def check_inbox(self):
-        """Ask the phone for new texts."""
         if not self.conn.smsgate or self.checking_inbox or self.inbox_unsupported:
             return
         first_sent = first_sent_times(self.user["id"])
         show_all = not self.only_ours.isChecked()
         if not first_sent and not show_all:
-            return                                     # we haven't texted anyone yet
+            return
         since = everyone_since_utc(first_sent) if show_all else inbox_since_utc(first_sent)
         self.checking_inbox = True
         run_in_background(get_sms_inbox, self.conn.smsgate, since,
@@ -441,10 +436,9 @@ class SmsChatTab(QWidget):
                           on_error=self.inbox_failed)
 
     def inbox_received(self, texts, first_sent):
-        """New texts received."""
         self.checking_inbox = False
         new, others = save_incoming(self.user["id"], texts, first_sent)
-        if not self.only_ours.isChecked():             # keep the rest in memory only
+        if not self.only_ours.isChecked():
             for t in others:
                 if t["phone"] not in self.hidden and t["key"] not in self.outside:
                     self.outside[t["key"]] = t
@@ -458,7 +452,6 @@ class SmsChatTab(QWidget):
         self.show_listening_status()
 
     def filter_changed(self, only_ours):
-        """Only people I texted / everyone."""
         self.outside.clear()
         self.seen_outside.clear()
         self.hidden.clear()
@@ -470,21 +463,20 @@ class SmsChatTab(QWidget):
             self.check_inbox()
 
     def inbox_failed(self, err):
-        """Inbox check failed."""
         self.checking_inbox = False
         if "can't share received texts" in friendly(err):
             self.inbox_unsupported = True
         self.show_listening_status()
 
+    # Coming back to this tab counts as reading the open chat.
     def showEvent(self, event):
-        """Mark the open chat read."""
         super().showEvent(event)
-        if self.current:                               # opening the tab reads the open chat
+        if self.current:
             mark_read(self.user["id"], self.current)
         self.refresh()
 
+    # Logout: stop checking and drop everything held in memory.
     def clear_credentials(self):
-        """Stop and clear (logout)."""
         self.inbox_timer.stop()
         self.outside.clear()
         self.only_ours.setChecked(True)

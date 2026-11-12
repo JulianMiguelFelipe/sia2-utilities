@@ -1,4 +1,10 @@
-"""Login system: register, login, password hashing, account changes."""
+"""Accounts: register, log in, change username or password.
+
+Passwords are hashed with PBKDF2-SHA256 (200,000 rounds) and a random 16-byte salt
+per user. Only the hash and salt are stored, never the password. At login a second,
+separate key is derived from the password; it unlocks the user's saved Gmail and
+SMSGate passwords and only lives in memory while the user is logged in.
+"""
 
 import hashlib
 import hmac
@@ -7,30 +13,32 @@ import re
 import sqlite3
 
 from database.db import get_connection
+from services.saved_logins_service import login_key, rekey_logins
 
-ITERATIONS = 200_000          # more rounds = slower to brute-force
+# More rounds make every guess slower for anyone trying to crack a stolen database.
+ITERATIONS = 200_000
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 MIN_PASSWORD_LENGTH = 8
 
 
-# ---------- Password hashing ----------
+# The same password + salt always gives the same hash, but a hash can't be turned back
+# into the password. A random salt per user means two users with the same password
+# still get different hashes.
 def hash_password(password, salt=None):
-    """Hash a password with a salt."""
     if salt is None:
-        salt = os.urandom(16)                  # new random salt for new users
+        salt = os.urandom(16)
     pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, ITERATIONS)
     return pw_hash.hex(), salt.hex()
 
 
 def verify_password(password, stored_hash, stored_salt):
-    """Check a password against its stored hash."""
     new_hash, _ = hash_password(password, bytes.fromhex(stored_salt))
-    return hmac.compare_digest(new_hash, stored_hash)   # safe comparison
+    # compare_digest takes the same time no matter where the hashes differ, so an attacker
+    # can't learn anything by timing the check.
+    return hmac.compare_digest(new_hash, stored_hash)
 
 
-# ---------- Validation ----------
 def validate_registration(username, password, confirm_password):
-    """Check the sign-up fields."""
     if not username or not password or not confirm_password:
         return "Please fill in all fields."
     if not USERNAME_PATTERN.match(username):
@@ -44,9 +52,7 @@ def validate_registration(username, password, confirm_password):
     return None
 
 
-# ---------- Register / Login ----------
 def register_user(username, password, confirm_password):
-    """Create a new account."""
     username = username.strip()
     error = validate_registration(username, password, confirm_password)
     if error:
@@ -61,14 +67,14 @@ def register_user(username, password, confirm_password):
         )
         conn.commit()
         return True, "Account created! You can now log in."
-    except sqlite3.IntegrityError:            # UNIQUE constraint on username
+    # The username column is UNIQUE, so a taken name raises IntegrityError.
+    except sqlite3.IntegrityError:
         return False, "That username is already taken."
     finally:
         conn.close()
 
 
 def login_user(username, password):
-    """Check username and password."""
     username = username.strip()
     if not username or not password:
         return None, "Please enter your username and password."
@@ -80,23 +86,31 @@ def login_user(username, password):
     ).fetchone()
     conn.close()
 
-    # Same message for "no such user" and "wrong password" so attackers
-    # can't tell which usernames exist.
+    # One message for both "no such user" and "wrong password", so nobody can use the
+    # login screen to find out which usernames exist.
     if row is None or not verify_password(password, row["password_hash"], row["salt"]):
         return None, "Invalid username or password."
 
-    return {"id": row["id"], "username": row["username"]}, "Login successful."
+    # "key" unlocks the saved logins. It is derived now because this is the only moment we
+    # have the plain password. It stays in memory in the user dict and is never saved.
+    user = {"id": row["id"], "username": row["username"], "key": login_key(password, row["salt"])}
+    return user, "Login successful."
 
 
-# ---------- Account settings (from the gear menu) ----------
+# Rebuilds the session key after a password change.
+def key_for(user_id, password):
+    conn = get_connection()
+    row = conn.execute("SELECT salt FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return login_key(password, row["salt"])
+
+
 def _check_current_password(conn, user_id, password):
-    """Check the signed-in user's password."""
     row = conn.execute("SELECT password_hash, salt FROM users WHERE id = ?", (user_id,)).fetchone()
     return row is not None and verify_password(password, row["password_hash"], row["salt"])
 
 
 def change_username(user_id, new_username, current_password):
-    """Change the username."""
     new_username = new_username.strip()
     if not USERNAME_PATTERN.match(new_username):
         return False, "Username must be 3-20 characters: letters, numbers, or underscore."
@@ -113,8 +127,9 @@ def change_username(user_id, new_username, current_password):
         conn.close()
 
 
+# A new password gets a new salt and hash. The saved logins are then re-encrypted with
+# a key from the new password, otherwise they could never be unlocked again.
 def change_password(user_id, current_password, new_password, confirm_password):
-    """Change the password (new salt + hash)."""
     if len(new_password) < MIN_PASSWORD_LENGTH:
         return False, f"New password must be at least {MIN_PASSWORD_LENGTH} characters."
     if not (re.search(r"[A-Za-z]", new_password) and re.search(r"\d", new_password)):
@@ -127,10 +142,12 @@ def change_password(user_id, current_password, new_password, confirm_password):
     try:
         if not _check_current_password(conn, user_id, current_password):
             return False, "Your current password is wrong."
+        old_salt = conn.execute("SELECT salt FROM users WHERE id = ?", (user_id,)).fetchone()["salt"]
         pw_hash, salt = hash_password(new_password)
         conn.execute("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
                      (pw_hash, salt, user_id))
         conn.commit()
+        rekey_logins(user_id, login_key(current_password, old_salt), login_key(new_password, salt))
         return True, "Password changed."
     finally:
         conn.close()

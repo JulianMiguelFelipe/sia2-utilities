@@ -1,12 +1,18 @@
-"""App stylesheet (QSS) for the current theme and scale."""
+"""The app's look: one Qt stylesheet (QSS, Qt's version of CSS) for every page.
+
+Widgets are styled by objectName, e.g. QPushButton#primary is the red button and
+QFrame#box is the white-bordered box, so code only needs to set a name. Colors
+come from the active theme (ui/theme.py) and every size goes through s(), which
+multiplies it by the window scale. Changing the theme or resizing the window just
+rebuilds this stylesheet.
+"""
 
 from ui.theme import colors
 
 
 def build_style(scale=1.0):
-    """Stylesheet for the current theme and scale."""
+    # Scale a pixel size, never below 1 px.
     def s(n):
-        """Scale a pixel size."""
         return max(1, round(n * scale))
 
     c = colors()
@@ -113,7 +119,12 @@ QTableCornerButton::section {{ background-color: {BG}; border: none; }}
 QScrollBar:vertical, QScrollBar:horizontal {{ background: {BG}; border: none; }}
 QScrollBar:vertical   {{ width: {s(10)}px; }}
 QScrollBar:horizontal {{ height: {s(10)}px; }}
-QScrollBar::handle {{ background: {c['faint']}; border-radius: {s(5)}px; min-height: {s(24)}px; min-width: {s(24)}px; }}
+QScrollBar::handle {{
+    background: {c['faint']};
+    border-radius: {s(5)}px;
+    min-height: {s(24)}px;
+    min-width: {s(24)}px;
+}}
 QScrollBar::handle:hover {{ background: {FG}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0px; height: 0px; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
@@ -225,6 +236,49 @@ QCheckBox::indicator {{
     background-color: {BG};
 }}
 QCheckBox::indicator:checked {{ background-color: {RED}; border-color: {RED}; }}
+QCheckBox:disabled {{ color: {c['muted']}; }}
+QCheckBox::indicator:checked:disabled {{ background-color: {c['faint']}; border-color: {c['faint']}; }}
+
+/* Dropdowns, dates and numbers (edit window) */
+QComboBox, QAbstractSpinBox {{
+    background-color: {BG};
+    color: {FG};
+    border: {s(2)}px solid {BORDER};
+    border-radius: {s(8)}px;
+    padding: {s(2)}px {s(10)}px;
+    selection-background-color: {RED};
+}}
+QComboBox:focus, QAbstractSpinBox:focus {{ border-color: {RED}; }}
+QComboBox QAbstractItemView {{
+    background-color: {BG};
+    color: {FG};
+    border: {s(2)}px solid {BORDER};
+    selection-background-color: {RED};
+    selection-color: {c['on_red']};
+}}
+QCalendarWidget QAbstractItemView {{ selection-background-color: {RED}; selection-color: {c['on_red']}; }}
+QCalendarWidget QToolButton {{ background: transparent; color: {FG}; font-weight: 800; }}
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {BG};
+    border-bottom: 1px solid {c['line']};
+}}
+QLabel#cardCaption {{ color: {c['muted']}; font-size: {s(11)}px; font-weight: 800; }}
+QLabel#thumb {{
+    background-color: {c['surface']};
+    color: {c['muted']};
+    border-radius: {s(8)}px;
+    font-size: {s(22)}px;
+    font-weight: 800;
+}}
+QLabel#lastName {{ font-size: {s(16)}px; font-weight: 800; }}
+QLabel#lastJob {{ color: {c['muted']}; font-size: {s(13)}px; font-weight: 700; }}
+QTextBrowser#lastData {{
+    background-color: {BG};
+    color: {FG};
+    border: {s(1)}px solid {c['line']};
+    border-radius: {s(8)}px;
+    padding: {s(6)}px {s(8)}px;
+}}
 
 /* Settings gear + its menu */
 QToolButton#gear {{ background: transparent; border: none; padding: {s(2)}px; }}
@@ -259,5 +313,4 @@ QMessageBox QPushButton, QDialog QPushButton {{
 
 
 def app_style():
-    """Normal-size stylesheet."""
     return build_style(1.0)

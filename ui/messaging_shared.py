@@ -1,4 +1,10 @@
-"""Shared by the SMS & Email sub-tabs: logins, SMS status, connection box."""
+"""Pieces shared by the three SMS & EMAIL sub-tabs (COMPOSE, SMS CHAT, EMAIL INBOX).
+
+Connections holds the live Gmail and SMSGate logins in memory so all three tabs
+use the same ones. SmsStatusTracker keeps asking the phone about texts that are
+still queued until they become delivered or failed. ConnectionBox is the
+EMAIL / SMS login box with its status dot and CONNECT button.
+"""
 
 from datetime import datetime, timedelta
 
@@ -9,12 +15,12 @@ from services.messaging_service import MessagingError, get_sms_status, update_me
 from ui.widgets import make_box, make_button
 from ui.workers import run_in_background
 
-POLL_EVERY_MS = 5000          # check SMS status every 5 seconds...
-POLL_MAX_TRIES = 24           # ...for up to 2 minutes
+# Check queued texts every 5 seconds, up to 24 times (2 minutes) each.
+POLL_EVERY_MS = 5000
+POLL_MAX_TRIES = 24
 
 
 def make_input(placeholder="", password=False):
-    """Text field (password optional)."""
     field = QLineEdit()
     field.setFixedHeight(28)
     field.setPlaceholderText(placeholder)
@@ -23,13 +29,13 @@ def make_input(placeholder="", password=False):
     return field
 
 
+# MessagingError messages are written for the user; anything else gets a general message.
 def friendly(err):
-    """Error text to show."""
     return str(err) if isinstance(err, MessagingError) else "Something went wrong. Try again."
 
 
+# Database time -> short label: "3:41 PM" today, "Yesterday", "Mar 5", or a full date.
 def friendly_time(value):
-    """Short date or time."""
     if not value:
         return ""
     when = value if isinstance(value, datetime) else datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
@@ -44,84 +50,78 @@ def friendly_time(value):
     return when.strftime("%Y-%m-%d")
 
 
+# The active logins, shared by every sub-tab. "changed" tells the tabs and the status
+# dots to update whenever a login connects or disconnects.
 class Connections(QObject):
-    """Shared Gmail and SMSGate logins."""
-
     changed = Signal()
 
     def __init__(self):
-        """Start disconnected."""
         super().__init__()
-        self.gmail = None        # (address, app_password)
-        self.smsgate = None      # SmsGateConfig
+        self.gmail = None
+        self.smsgate = None
 
     def set_gmail(self, gmail):
-        """Set the Gmail login."""
         self.gmail = gmail
         self.changed.emit()
 
     def set_smsgate(self, config):
-        """Set the SMSGate login."""
         self.smsgate = config
         self.changed.emit()
 
     def clear(self):
-        """Forget both logins."""
         self.gmail = None
         self.smsgate = None
         self.changed.emit()
 
 
+# SMS status tracking. When SMSGate accepts a text it is only "queued"; the phone sends
+# it a moment later. Every 5 seconds this asks the phone for the new status, updates
+# the history, and stops once the text is delivered or failed.
 class SmsStatusTracker(QObject):
-    """Follows QUEUED texts until final."""
-
-    updated = Signal()           # a status changed in the database
+    updated = Signal()
 
     def __init__(self, connections):
-        """Start the tracker."""
         super().__init__()
         self.conn = connections
-        self.pending = {}        # message row id -> {"gateway_id", "tries", "checking", "last"}
+        self.pending = {}
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_EVERY_MS)
         self.timer.timeout.connect(self.poll)
 
     def track(self, row_id, gateway_id):
-        """Start following a text."""
         self.pending[row_id] = {"gateway_id": gateway_id, "tries": 0, "checking": False}
         self.timer.start()
 
     def forget(self, row_ids=None):
-        """Stop following texts."""
         if row_ids is None:
             self.pending.clear()
         for row_id in row_ids or []:
             self.pending.pop(row_id, None)
 
     def stop(self):
-        """Stop everything."""
         self.timer.stop()
         self.pending.clear()
 
     def poll(self):
-        """Ask the phone about each text."""
         if not self.pending or not self.conn.smsgate:
             self.timer.stop()
             return
+        # "checking" skips a text whose last check hasn't answered yet, so slow replies
+        # don't pile up.
         for row_id, info in list(self.pending.items()):
             if info["checking"]:
                 continue
-            if info["tries"] >= POLL_MAX_TRIES:           # give up; stays as it is
+            if info["tries"] >= POLL_MAX_TRIES:
                 del self.pending[row_id]
                 continue
             info["tries"] += 1
             info["checking"] = True
+            # Each check runs in the background; r=row_id freezes the current row id inside the lambda.
             run_in_background(get_sms_status, self.conn.smsgate, info["gateway_id"],
                               on_done=lambda result, r=row_id: self.checked(r, result),
                               on_error=lambda _err, r=row_id: self.check_failed(r))
 
     def checked(self, row_id, result):
-        """Status received."""
         status, error = result
         info = self.pending.get(row_id)
         if info is None:
@@ -129,8 +129,7 @@ class SmsStatusTracker(QObject):
         info["checking"] = False
         if status == "queued":
             return
-        # SENT: keep checking in case a delivery report arrives.
-        # DELIVERED / FAILED: final, stop checking.
+        # Only write to the database and refresh the screen when the status actually changed.
         if status != info.get("last"):
             update_message_status(row_id, status, error)
             info["last"] = status
@@ -139,23 +138,21 @@ class SmsStatusTracker(QObject):
             del self.pending[row_id]
 
     def check_failed(self, row_id):
-        """Status check failed."""
         if row_id in self.pending:
-            self.pending[row_id]["checking"] = False     # try again next tick
+            self.pending[row_id]["checking"] = False
 
 
+# A login box: title, CONNECTED / NOT CONNECTED dot, input fields, CONNECT button and
+# an error line. Fields are locked while connected so the login can't change mid-session.
 class ConnectionBox(QWidget):
-    """Connection box with CONNECT button."""
-
     def __init__(self, title, hint):
-        """Build the box."""
         super().__init__()
         self.box = make_box()
         self.dot = QLabel("", objectName="dotOff")
         self.button = make_button("CONNECT", "primary", width=130)
         self.error = QLabel("", objectName="error")
         self.error.setWordWrap(True)
-        self.error.hide()                 # only shown when there's an error
+        self.error.hide()
         self.fields = []
 
         header = QHBoxLayout()
@@ -173,7 +170,7 @@ class ConnectionBox(QWidget):
         layout.addWidget(QLabel(hint, objectName="hint"))
         layout.addSpacing(2)
         layout.addLayout(self.form)
-        layout.addSpacing(10)                   # gap above the CONNECT button
+        layout.addSpacing(10)
         layout.addWidget(self.button, alignment=Qt.AlignLeft)
         layout.addWidget(self.error)
 
@@ -183,7 +180,6 @@ class ConnectionBox(QWidget):
         self.set_connected(False)
 
     def add_field(self, widget_or_layout, *fields):
-        """Add a field."""
         if isinstance(widget_or_layout, QWidget):
             self.form.addWidget(widget_or_layout)
         else:
@@ -191,7 +187,6 @@ class ConnectionBox(QWidget):
         self.fields.extend(fields)
 
     def set_connected(self, connected):
-        """Show connected or not."""
         self.dot.setObjectName("dotOn" if connected else "dotOff")
         self.dot.style().polish(self.dot)
         self.dot.setText("● CONNECTED" if connected else "● NOT CONNECTED")
@@ -202,12 +197,10 @@ class ConnectionBox(QWidget):
             self.show_error("")
 
     def show_error(self, text):
-        """Show or hide the error."""
         self.error.setText(text)
         self.error.setVisible(bool(text))
 
     def set_busy(self, busy):
-        """Show CONNECTING..."""
         self.button.setEnabled(not busy)
         if busy:
             self.button.setText("CONNECTING...")

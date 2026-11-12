@@ -1,4 +1,11 @@
-"""URL Shortener page."""
+"""Feature 1: URL Shortener page.
+
+Paste a long link and press START. The link is cleaned up and checked
+(normalize_url), then shortened through TinyURL in the background so the window
+doesn't freeze. Every short link is saved to the user's history table, where it
+can be searched, copied, opened or deleted. Shortening the same link twice
+reuses the saved short link instead of asking TinyURL again.
+"""
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -7,6 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from services.saved_logins_service import load_logins, save_tinyurl_token
 from services.url_service import (
     clear_short_urls, delete_short_urls, find_existing, get_history,
     normalize_url, save_short_url, shorten_url,
@@ -17,7 +25,6 @@ from ui.workers import run_in_background
 
 
 def make_field(placeholder="", read_only=False):
-    """Text field."""
     field = QLineEdit()
     field.setFixedHeight(32)
     field.setPlaceholderText(placeholder)
@@ -25,8 +32,8 @@ def make_field(placeholder="", read_only=False):
     return field
 
 
+# "saved" = how many characters shorter the new link is.
 def savings_text(long_url, short_url):
-    """'49 -> 28 characters' line."""
     saved = len(long_url) - len(short_url)
     if saved <= 0:
         return f"{len(long_url)} → {len(short_url)} characters (this link was already short)"
@@ -35,12 +42,11 @@ def savings_text(long_url, short_url):
 
 
 class UrlShortenerPage(QWidget):
-    """URL Shortener page."""
     def __init__(self, user):
-        """Build the page."""
         super().__init__()
         self.user = user
         self.history = []
+        self.token = load_logins(user["id"], user["key"]).get("tinyurl_token") or ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -49,9 +55,7 @@ class UrlShortenerPage(QWidget):
         layout.addWidget(self.build_history_box(), stretch=1)
         self.refresh()
 
-    # ---------- Shortening ----------
     def build_form_box(self):
-        """Shortening box."""
         box = make_box()
 
         self.long_url = make_field("Paste a long link, e.g. https://example.com/a/very/long/link")
@@ -87,6 +91,19 @@ class UrlShortenerPage(QWidget):
         self.savings = QLabel("", objectName="hint")
         self.message = QLabel("", objectName="error")
 
+        # Optional own TinyURL token, saved encrypted to the account. Empty = built-in team token.
+        self.token_field = make_field("Your TinyURL API token (optional)")
+        self.token_field.setEchoMode(QLineEdit.Password)
+        self.token_field.setText(self.token)
+        self.token_field.returnPressed.connect(self.save_token)
+        save_token_btn = make_button("SAVE", "secondary", width=90)
+        save_token_btn.clicked.connect(self.save_token)
+        self.token_note = QLabel("", objectName="hint")
+        token_row = QHBoxLayout()
+        token_row.setSpacing(8)
+        token_row.addWidget(self.token_field, stretch=1)
+        token_row.addWidget(save_token_btn)
+
         layout = QVBoxLayout(box)
         layout.setContentsMargins(20, 12, 20, 14)
         layout.setSpacing(4)
@@ -104,24 +121,41 @@ class UrlShortenerPage(QWidget):
         status_row.addStretch()
         status_row.addWidget(self.savings)
         layout.addLayout(status_row)
+        layout.addSpacing(6)
+        token_label = QHBoxLayout()
+        token_label.addWidget(field_label("TINYURL TOKEN"))
+        token_label.addStretch()
+        token_label.addWidget(self.token_note)
+        layout.addLayout(token_label)
+        layout.addLayout(token_row)
+        self.update_token_note()
         return box
 
+    def update_token_note(self):
+        self.token_note.setText("Using your saved token" if self.token
+                                else "Empty: using the built-in team token")
+
+    def save_token(self):
+        self.token = self.token_field.text().strip()
+        save_tinyurl_token(self.user["id"], self.user["key"], self.token)
+        self.update_token_note()
+        self.show_message("Token saved to your account." if self.token
+                          else "Token cleared. Using the built-in team token.", success=True)
+
+    # Live character count under the LONG URL field.
     def update_counter(self):
-        """Character counter."""
         n = len(self.long_url.text().strip())
         self.counter.setText(f"{n} character{'s' if n != 1 else ''}")
 
     def paste(self):
-        """PASTE button."""
         self.long_url.setText(QApplication.clipboard().text().strip())
         self.long_url.setFocus()
 
     def show_message(self, text, success=False):
-        """Status message."""
         set_status(self.message, text, success)
 
+    # START: validate, reuse a saved link if there is one, otherwise ask TinyURL.
     def handle_shorten(self):
-        """START button."""
         self.short_url.clear()
         self.savings.clear()
         try:
@@ -131,7 +165,8 @@ class UrlShortenerPage(QWidget):
             return
         self.long_url.setText(url)
 
-        existing = find_existing(self.user["id"], url)      # shortened before? reuse it
+        # Shortened before? Reuse it so the history doesn't fill up with duplicates.
+        existing = find_existing(self.user["id"], url)
         if existing:
             self.short_url.setText(existing["short_url"])
             self.savings.setText(savings_text(url, existing["short_url"]))
@@ -143,17 +178,17 @@ class UrlShortenerPage(QWidget):
         self.start_btn.setEnabled(False)
         self.start_btn.setText("WORKING...")
         self.show_message("Shortening...", success=True)
-        run_in_background(shorten_url, url,
+        # The TinyURL request runs on a worker thread (ui/workers.py); the result comes back
+        # to shorten_done or shorten_failed on the main thread.
+        run_in_background(shorten_url, url, self.token,
                           on_done=lambda short: self.shorten_done(url, short),
                           on_error=self.shorten_failed)
 
     def finish(self):
-        """Reset the START button."""
         self.start_btn.setEnabled(True)
         self.start_btn.setText("START")
 
     def shorten_done(self, url, short):
-        """Short link received."""
         self.finish()
         self.short_url.setText(short)
         save_short_url(self.user["id"], url, short)
@@ -162,27 +197,23 @@ class UrlShortenerPage(QWidget):
         self.refresh()
 
     def shorten_failed(self, err):
-        """Shortening failed."""
         self.finish()
+        # ConnectionError messages from url_service are written for the user, so show them as-is.
         self.show_message(str(err) if isinstance(err, ConnectionError)
                           else "Something went wrong. Try again.")
 
     def copy(self, link):
-        """COPY button."""
         if not link:
             return self.show_message("Shorten a link first.")
         QApplication.clipboard().setText(link)
         self.show_message(f"Copied {link}", success=True)
 
     def open_link(self, link):
-        """OPEN button."""
         if not link:
             return self.show_message("Shorten a link first.")
-        QDesktopServices.openUrl(QUrl(link))              # opens in your browser
+        QDesktopServices.openUrl(QUrl(link))
 
-    # ---------- History ----------
     def build_history_box(self):
-        """HISTORY box."""
         box = make_box()
 
         self.search = make_field("Search links")
@@ -215,10 +246,11 @@ class UrlShortenerPage(QWidget):
         self.table.setShowGrid(False)
         self.table.setMinimumHeight(70)
         self.table.setWordWrap(False)
+        # Double-clicking a history row copies its short link.
         self.table.cellDoubleClicked.connect(lambda r, _c: self.copy(self.table.item(r, 1).text()))
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)    # ORIGINAL URL fills the rest
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self.empty_label = QLabel("No links yet. Shortened links will show up here. "
@@ -232,12 +264,11 @@ class UrlShortenerPage(QWidget):
         return box
 
     def refresh(self):
-        """Reload the history."""
         self.history = get_history(self.user["id"])
         self.show_history()
 
+    # Search filters the table by the original or short link as you type.
     def show_history(self):
-        """Draw the history table."""
         query = self.search.text().strip().lower()
         rows = [h for h in self.history
                 if not query or query in h["original_url"].lower() or query in h["short_url"].lower()]
@@ -248,18 +279,17 @@ class UrlShortenerPage(QWidget):
             values = [h["created_at"], h["short_url"], h["original_url"], f"{saved} chars"]
             for c, value in enumerate(values):
                 item = QTableWidgetItem(value)
+                # Each cell remembers its database row id, used by delete and select.
                 item.setData(Qt.UserRole, h["id"])
                 if c == 2:
-                    item.setToolTip(value)                   # full link on hover
+                    item.setToolTip(value)
                 self.table.setItem(r, c, item)
 
     def selected_short(self):
-        """Selected short link."""
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
         return self.table.item(rows[0], 1).text() if rows else ""
 
     def select_in_history(self, row_id):
-        """Highlight a history row."""
         self.search.clear()
         for r in range(self.table.rowCount()):
             if self.table.item(r, 0).data(Qt.UserRole) == row_id:
@@ -268,7 +298,6 @@ class UrlShortenerPage(QWidget):
                 return
 
     def handle_delete(self):
-        """DELETE SELECTED button."""
         rows = {i.row() for i in self.table.selectedIndexes()}
         if not rows:
             return self.show_message("Select a link in the history first.")
@@ -276,7 +305,6 @@ class UrlShortenerPage(QWidget):
         self.refresh()
 
     def handle_clear_all(self):
-        """CLEAR ALL button."""
         if not self.history:
             return
         answer = QMessageBox.question(self, "JD UTILS", "Delete your whole link history?")

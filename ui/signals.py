@@ -1,22 +1,23 @@
-"""Auto-disconnect app-wide signals when a widget is deleted."""
+"""connect_alive(): connect an app-wide signal to a widget safely.
+
+App-wide signals (theme changed, window rescaled) outlive the pages listening to
+them. After a page is deleted (for example on logout) calling into its widgets
+would crash, so the slot disconnects itself when its owner widget is destroyed.
+"""
 
 
 def connect_alive(signal, owner, fn):
-    """Connect, and disconnect when the widget is deleted."""
-
     def slot(*args):
-        """Call fn unless the widget is gone."""
         try:
             fn(*args)
-        except RuntimeError:              # owner is already gone
+        except RuntimeError:
             disconnect()
 
     def disconnect(*_):
-        """Disconnect."""
         try:
             signal.disconnect(slot)
         except (RuntimeError, TypeError):
-            pass                          # already disconnected
+            pass
 
     signal.connect(slot)
     owner.destroyed.connect(disconnect)

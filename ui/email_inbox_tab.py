@@ -1,4 +1,11 @@
-"""EMAIL INBOX sub-tab: read and reply to Gmail."""
+"""Feature 3: EMAIL INBOX sub-tab. Read your Gmail inbox and reply without leaving the app.
+
+Left: the inbox list (newest first, unread in bold with a red dot, LOAD MORE for
+older mail). Right: the reader, with a reply box underneath. Replies are sent
+with the same Gmail login as COMPOSE and stay in the same Gmail conversation.
+By default only emails from people you emailed through JD UTILS are listed;
+the gear menu can switch that off. The list refreshes itself every minute.
+"""
 
 import html
 import re
@@ -22,21 +29,22 @@ from ui.widgets import make_box, make_button, set_status
 from ui.workers import run_in_background
 from ui.signals import connect_alive
 
-AUTO_REFRESH_MS = 60_000          # check for new mail every minute
+AUTO_REFRESH_MS = 60_000
 
 
 def _short(text, limit=40):
-    """Shorten text with an ellipsis."""
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+# Turns web links in an email into clickable links.
 URL_PATTERN = re.compile(r"(https?://[^\s<>\"]+)")
+# The "On <date>, <name> wrote:" line where a quoted earlier email starts.
 QUOTE_START = re.compile(r"^On .{4,200}wrote:\s*$")
 
 
+# Plain text -> HTML paragraphs (blank lines split paragraphs; links become clickable).
 def _paragraphs_html(lines, color, size):
-    """Lines to paragraphs with links."""
     out, block = [], []
     for line in lines + [""]:
         if line.strip():
@@ -48,11 +56,13 @@ def _paragraphs_html(lines, color, size):
     return "".join(out)
 
 
+# Shows the new part of an email normally, and the quoted older conversation below it
+# in a gray box, like Gmail does.
 def format_email_body(text):
-    """Style the email and its quoted part."""
     s, p = current_scale(), colors()
     lines = text.replace("\r\n", "\n").split("\n")
-    for i in range(len(lines) - 1):          # Gmail sometimes splits "On ... wrote:" in two
+    # Gmail sometimes wraps the "On ... wrote:" line in two; join it back into one line.
+    for i in range(len(lines) - 1):
         joined = f"{lines[i].strip()} {lines[i + 1].strip()}"
         if lines[i].startswith("On ") and not QUOTE_START.match(lines[i].strip()) \
                 and QUOTE_START.match(joined):
@@ -80,19 +90,17 @@ def format_email_body(text):
 
 
 class EmailInboxTab(QWidget):
-    """EMAIL INBOX sub-tab."""
     unread_changed = Signal(int)
 
     def __init__(self, user, connections):
-        """Build the tab."""
         super().__init__()
         self.user = user
         self.conn = connections
-        self.emails = []           # the loaded list (memory only)
+        self.emails = []
         self.limit = PAGE_SIZE
         self.has_more = False
         self.loading = False
-        self.opened = None         # the email shown on the right
+        self.opened = None
         self.sending = False
 
         layout = QVBoxLayout(self)
@@ -115,13 +123,12 @@ class EmailInboxTab(QWidget):
         connect_alive(scale_events.changed, self, lambda _s: self.render_body())
         self.connection_changed()
 
-    # ---------- Toolbar ----------
     def build_toolbar(self):
-        """Search, filter and REFRESH."""
         self.search = make_input("Search sender or subject")
         self.search.setFixedWidth(280)
         self.search.textChanged.connect(self.show_list)
-        self.only_ours = QAction("Email Inbox: only people I emailed", self)  # in the gear menu
+        # This option lives in the gear menu (dashboard.py) but is owned here.
+        self.only_ours = QAction("Email Inbox: only people I emailed", self)
         self.only_ours.setCheckable(True)
         self.only_ours.setChecked(True)
         self.only_ours.toggled.connect(self.restart)
@@ -139,9 +146,7 @@ class EmailInboxTab(QWidget):
         row.addWidget(self.refresh_btn)
         return row
 
-    # ---------- Left: the list ----------
     def build_list_box(self):
-        """INBOX list box."""
         box = make_box()
         box.setFixedWidth(340)
         self.list_title = QLabel("INBOX", objectName="sectionTitle")
@@ -162,7 +167,6 @@ class EmailInboxTab(QWidget):
         return box
 
     def connection_changed(self):
-        """Gmail connected or not."""
         if self.conn.gmail:
             self.timer.start()
             self.restart()
@@ -172,49 +176,46 @@ class EmailInboxTab(QWidget):
             self.list_note.setText("EMAIL isn't connected. Connect it in COMPOSE to see your inbox.")
 
     def restart(self):
-        """Reload from the first page."""
         self.limit = PAGE_SIZE
-        self.show_list()                    # update the 'Showing:' line
+        self.show_list()
         self.load()
 
     def load_more(self):
-        """LOAD MORE button."""
         self.limit += PAGE_SIZE
         self.load()
 
     def load(self):
-        """Load emails in the background."""
         if not self.conn.gmail or self.loading:
             return
+        # With the filter on, only the addresses this user emailed are searched in Gmail.
         only = emailed_addresses(self.user["id"]) if self.only_ours.isChecked() else None
         self.loading = True
         self.refresh_btn.setEnabled(False)
         self.refresh_btn.setText("LOADING...")
+        # IMAP is slow compared to a local database, so loading always runs in the background.
         run_in_background(fetch_inbox, self.conn.gmail, self.limit, only,
                           on_done=self.loaded, on_error=self.load_failed)
 
     def finish_loading(self):
-        """Reset the REFRESH button."""
         self.loading = False
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setText("REFRESH")
 
     def loaded(self, result):
-        """Emails loaded."""
         self.finish_loading()
-        if not self.conn.gmail:                        # disconnected while loading
+        # EMAIL may have been disconnected while this was loading; ignore the late result.
+        if not self.conn.gmail:
             return
         self.emails, self.has_more = result
         self.updated.setText(f"Updated {friendly_time(datetime.now())}")
         self.show_list()
 
     def load_failed(self, err):
-        """Loading failed."""
         self.finish_loading()
         self.list_note.setText(friendly(err))
 
+    # Search filters the already-loaded emails by sender or subject as you type.
     def show_list(self):
-        """Draw the email list."""
         query = self.search.text().strip().lower()
         shown = [e for e in self.emails
                  if not query or query in e["name"].lower() or query in e["address"].lower()
@@ -230,7 +231,7 @@ class EmailInboxTab(QWidget):
             label.setContentsMargins(pad + 2, pad, pad + 2, pad)
             self.list.addItem(item)
             self.list.setItemWidget(item, label)
-            label.ensurePolished()                        # apply the stylesheet font first
+            label.ensurePolished()
             lines = 2
             height = lines * QFontMetrics(label.font()).lineSpacing() + 2 * pad
             item.setSizeHint(QSize(0, height + round(12 * current_scale())))
@@ -256,8 +257,8 @@ class EmailInboxTab(QWidget):
         self.unread_changed.emit(unread)
 
     @staticmethod
+    # HTML for one inbox row: unread dot, sender, time and subject (bold while unread).
     def item_html(e):
-        """One email in the list."""
         p = colors()
         dot = f"<span style='color:{p['red']}'>● </span>" if e["unread"] else ""
         name = html.escape(_short(e["name"], 26))
@@ -269,12 +270,9 @@ class EmailInboxTab(QWidget):
                 f"<td align='right'><span style='color:{p['muted']}'>{when}</span></td></tr></table>"
                 f"<span style='{subject_style}'>{subject}</span>")
 
-    # ---------- Right: reading + replying ----------
     def build_reader_box(self):
-        """Email reader and reply box."""
         box = make_box()
 
-        # Header: subject, then [avatar] name <address> ........ date
         self.subject = QLabel("", objectName="emailSubject")
         self.subject.setWordWrap(True)
         self.avatar = QLabel("", objectName="avatar")
@@ -311,7 +309,6 @@ class EmailInboxTab(QWidget):
         head_box = QWidget(objectName="chatHeader")
         head_box.setLayout(head)
 
-        # Body: formatted text, quoted earlier messages in a grey box
         self.body = QTextBrowser(objectName="emailBody")
         self.body.setOpenLinks(False)
         self.body.anchorClicked.connect(lambda url: QDesktopServices.openUrl(url))
@@ -355,7 +352,6 @@ class EmailInboxTab(QWidget):
         return box
 
     def open(self, uid):
-        """Open an email."""
         if not self.conn.gmail:
             return
         self.subject.setText("Opening...")
@@ -364,7 +360,6 @@ class EmailInboxTab(QWidget):
                           on_error=lambda err: self.subject.setText(friendly(err)))
 
     def show_email(self, email):
-        """Show an email in the reader."""
         self.opened = email
         if email is None:
             self.subject.setText("EMAIL INBOX")
@@ -378,6 +373,7 @@ class EmailInboxTab(QWidget):
             self.reply_to.setText("")
             return
         self.subject.setText(email["subject"])
+        # The round avatar shows the sender's first letter.
         self.avatar.setText((email["name"] or email["address"] or "?")[:1].upper())
         self.avatar.show()
         self.sender_name.setText(email["name"])
@@ -395,20 +391,22 @@ class EmailInboxTab(QWidget):
         self.foot_box.setEnabled(True)
         self.reply_to.setText(f"To {email['address']} · {reply_subject(email['subject'])}")
         self.reply_status.setText("Your reply joins the same Gmail conversation.")
-        for e in self.emails:                           # opening marks it read
+        # Opening an email marks it as read in Gmail, so update the list and badge without reloading.
+        for e in self.emails:
             if e["uid"] == email["uid"]:
                 e["unread"] = False
         self.show_list()
 
+    # Re-run when the theme or scale changes, since colors and sizes are written into the HTML.
     def render_body(self):
-        """Draw the email text."""
         if not self.opened:
             return
         self.body.document().setDefaultStyleSheet(f"a {{ color: {colors()['red']}; }}")
         self.body.setHtml(format_email_body(self.opened["body"]))
 
+    # Reply = new email to the sender with "Re:" added, the original quoted below, and the
+    # thread headers so Gmail groups it with the original.
     def send_reply(self):
-        """SEND REPLY button."""
         email, text = self.opened, self.reply.toPlainText().strip()
         if not email or self.sending:
             return
@@ -427,28 +425,23 @@ class EmailInboxTab(QWidget):
                           on_error=lambda err: self.reply_failed(email, subject, text, err))
 
     def finish_sending(self):
-        """Reset the SEND REPLY button."""
         self.sending = False
         self.send_btn.setEnabled(True)
         self.send_btn.setText("SEND REPLY")
 
     def reply_sent(self, email, subject, text):
-        """Reply sent."""
         log_message(self.user["id"], "email", email["address"], subject, text, "sent")
         self.finish_sending()
         self.reply.clear()
         set_status(self.reply_status, f"Reply sent to {email['address']}", success=True)
 
     def reply_failed(self, email, subject, text, err):
-        """Reply failed."""
         log_message(self.user["id"], "email", email["address"], subject, text, "failed",
                     error=friendly(err))
         self.finish_sending()
         set_status(self.reply_status, friendly(err))
 
-    # ---------- Logout ----------
     def forget(self):
-        """Clear loaded emails."""
         self.emails = []
         self.has_more = False
         self.reply.clear()
@@ -456,7 +449,7 @@ class EmailInboxTab(QWidget):
         self.show_email(None)
         self.show_list()
 
+    # Logout: stop auto-refresh and clear everything shown.
     def clear_credentials(self):
-        """Stop and clear (logout)."""
         self.timer.stop()
         self.forget()

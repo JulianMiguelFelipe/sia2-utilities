@@ -1,11 +1,18 @@
-"""Dashboard window: top bar, tabs, settings menu."""
+"""Main window after login: top navigation bar, the three feature pages and the
+settings (gear) menu.
+
+The three features are separate page classes inside a QStackedWidget; clicking a
+tab shows that page. All pages share the same user dict, so a username change
+shows up everywhere at once.
+"""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
-    QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QStackedWidget, QToolButton, QVBoxLayout,
 )
 
+from ui.fake_data_page import FakeDataPage
 from ui.messaging_page import MessagingPage
 from ui.url_page import UrlShortenerPage
 from ui.scaling import ScalingWindow
@@ -14,57 +21,26 @@ from ui.theme import current_theme, toggle_theme
 from ui.widgets import ClockLabel, GearButton, make_box
 
 
-class ComingSoonPage(QWidget):
-    """Placeholder page."""
-
-    def __init__(self, title, description):
-        """Build the page."""
-        super().__init__()
-        box = make_box()
-        box.setFixedWidth(676)
-        box_layout = QVBoxLayout(box)
-        box_layout.setContentsMargins(22, 14, 22, 22)
-        box_layout.addWidget(QLabel(title, objectName="boxTitle"))
-        box_layout.addWidget(QLabel(description, objectName="fieldLabel"))
-        box_layout.addSpacing(12)
-        box_layout.addWidget(QLabel("COMING SOON", objectName="error"))
-
-        row = QHBoxLayout()
-        row.addStretch()
-        row.addWidget(box)
-        row.addStretch()
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 44, 26, 0)
-        layout.setSpacing(22)
-        layout.addLayout(row)
-        layout.addStretch()
-
-
 class Dashboard(ScalingWindow):
-    """Main window after login."""
     logout_requested = Signal()
-    BASE_SIZE = (1000, 660)         # everything grows when the window is bigger
+    BASE_SIZE = (1000, 660)
 
     def __init__(self, user):
-        """Build the top bar and pages."""
         super().__init__()
-        self.user = user                       # {"id": ..., "username": ...}
+        self.user = user
         self.setWindowTitle("JD UTILS")
         self.resize(1000, 660)
         self.setMinimumSize(860, 540)
 
-        # ---------- Pages ----------
+        # The three features. A QStackedWidget shows one page at a time.
         self.stack = QStackedWidget()
         pages = [
             ("URL SHORTENER", UrlShortenerPage(user)),
-            ("FAKE DATA GENERATOR", ComingSoonPage(
-                "FAKE DATA GENERATOR", "Generate and store records with 10 fields each.")),
-            ("SMS && EMAIL UI", MessagingPage(user)),      # && shows a single &
+            ("FAKE DATA GENERATOR", FakeDataPage(user)),
+            ("SMS && EMAIL UI", MessagingPage(user)),
         ]
         self.pages = [page for _, page in pages]
 
-        # ---------- Top navigation bar ----------
         nav = make_box()
         nav_layout = QHBoxLayout(nav)
         nav_layout.setContentsMargins(10, 4, 10, 4)
@@ -72,6 +48,7 @@ class Dashboard(ScalingWindow):
         nav_layout.addWidget(QLabel("JD UTILS", objectName="brand"))
         nav_layout.addSpacing(6)
 
+        # A QButtonGroup keeps exactly one tab highlighted.
         self.tabs = QButtonGroup(self)
         self.tabs.setExclusive(True)
         for index, (label, page) in enumerate(pages):
@@ -85,7 +62,7 @@ class Dashboard(ScalingWindow):
         self.tabs.button(0).setChecked(True)
 
         nav_layout.addStretch()
-        nav_layout.addWidget(ClockLabel())                       # live date and time
+        nav_layout.addWidget(ClockLabel())
         divider = QFrame(objectName="headerDivider")
         divider.setFixedSize(1, 22)
         nav_layout.addWidget(divider)
@@ -93,23 +70,23 @@ class Dashboard(ScalingWindow):
         nav_layout.addWidget(self.user_label)
         nav_layout.addWidget(self.make_gear_button())
 
-        # ---------- Put it together ----------
         layout = QVBoxLayout(self.content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(nav)
         layout.addWidget(self.stack, stretch=1)
+        # Every widget exists now, so capture their sizes for window scaling (ui/scaling.py).
         self.finish_scaling()
 
+    # Called on logout: each page forgets anything it holds in memory.
     def clear_session(self):
-        """Forget all logins (logout)."""
         for page in self.pages:
             if hasattr(page, "clear_credentials"):
                 page.clear_credentials()
 
-    # ---------- Settings (gear) menu ----------
+    # Settings menu: who is signed in, light/dark mode, SMS & email filters, account
+    # changes and log out.
     def make_gear_button(self):
-        """Settings gear and menu."""
         gear = GearButton()
         gear.setToolTip("Settings")
         gear.setPopupMode(QToolButton.InstantPopup)
@@ -121,7 +98,7 @@ class Dashboard(ScalingWindow):
         self.theme_action = menu.addAction("", toggle_theme)
         menu.addSeparator()
         messaging = self.pages[2]
-        menu.addAction(messaging.chat.only_ours)       # privacy filters (checkable)
+        menu.addAction(messaging.chat.only_ours)
         menu.addAction(messaging.inbox.only_ours)
         menu.addSeparator()
         menu.addAction("Change username", self.change_username)
@@ -134,20 +111,17 @@ class Dashboard(ScalingWindow):
         return gear
 
     def update_menu(self):
-        """Refresh menu labels."""
         self.who.setText(f"Signed in as {self.user['username']}")
         self.theme_action.setText("Switch to light mode" if current_theme() == "dark"
                                   else "Switch to dark mode")
 
     def change_username(self):
-        """Open Change username."""
         if ChangeUsernameDialog(self, self.user).exec():
             self.user_label.setText(self.user["username"])
             QMessageBox.information(self, "JD UTILS",
                                     f"Your username is now {self.user['username']}.")
 
     def change_password(self):
-        """Open Change password."""
         if ChangePasswordDialog(self, self.user).exec():
             QMessageBox.information(self, "JD UTILS",
                                     "Password changed. Use the new one next time you log in.")

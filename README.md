@@ -3,9 +3,9 @@
 **Julian & Darwin Utilities** is a Python desktop app for our SIA 2 (ITL313-18) final term mini project, built with PySide6 and SQLite.
 
 - **Login system:** username and password, stored as salted PBKDF2-SHA256 hashes
-- **URL Shortener:** TinyURL links with a searchable history
-- **Fake Data Generator:** 10-field records saved to the database
-- **SMS & Email:** send texts through SMSGate and email through Gmail, plus an SMS chat and an email inbox
+- **URL Shortener:** TinyURL links that open the page directly, with a searchable history (optional own API token per account)
+- **Fake Data Generator:** fake Filipino people with the fields you pick and an AI photo, saved to the database, shown as an ID card and downloadable as Excel, PDF or PNG
+- **SMS & Email:** send texts through SMSGate and email through Gmail, plus an SMS chat and an email inbox. Logins are saved to your account with encrypted passwords
 
 ## Setup (first time)
 
@@ -62,3 +62,4 @@ The first push of a new branch needs `git push -u origin <your-branch>`.
 | `CONFLICT` after a pull | Keep the right lines, delete the `<<<<<<<` `=======` `>>>>>>>` markers, then add, commit and push |
 | App errors after a pull | Delete `data\app.db` and run the app again |
 | `ModuleNotFoundError` | Activate the venv, then `pip install -r requirements.txt` |
+| "TinyURL rejected the API token" | Clear the TINYURL TOKEN box and SAVE to use the built-in token, or paste a working one |

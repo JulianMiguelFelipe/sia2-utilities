@@ -1,4 +1,10 @@
-"""Window scaling: everything grows with the window size."""
+"""Window scaling: everything grows when the window gets bigger.
+
+Pages are designed at BASE_SIZE (1000 x 660). In a bigger window the scale is the
+smaller of width/1000 and height/660, kept between 1.0 and 2.0 in steps of 0.1.
+Fonts grow by rebuilding the stylesheet with build_style(scale). Fixed sizes,
+margins and spacing grow through ScaleManager, from the values captured at 1.0.
+"""
 
 import math
 
@@ -11,43 +17,43 @@ from ui.styles import build_style
 from ui.theme import theme_events
 from ui.signals import connect_alive
 
-MAX_SIZE = 16777215          # Qt's "no limit" value
+# Qt's "no maximum" value. Widgets with no maximum size are left that way.
+MAX_SIZE = 16777215
 
 
 class _ScaleEvents(QObject):
-    """Scale-changed signal."""
     changed = Signal(float)
 
 
+# Pages that work out their own sizes (like the fake data panel) listen to this.
 scale_events = _ScaleEvents()
 _current = {"scale": 1.0}
 
 
 def current_scale():
-    """Current scale (1.0 = normal)."""
     return _current["scale"]
+
+
+# Scale limits. Whole steps of 0.1 stop the layout from jittering while you resize.
 MIN_SCALE, MAX_SCALE, STEP = 1.0, 2.0, 0.1
 
 
 def scale_for(width, height, base_width, base_height):
-    """Scale for a window size."""
     raw = min(width / base_width, height / base_height)
     raw = max(MIN_SCALE, min(MAX_SCALE, raw))
     return round(math.floor(raw / STEP + 1e-9) * STEP, 2)
 
 
+# Remembers every widget size, margin and spacing at scale 1.0, then re-applies them
+# multiplied by the current scale. Always starting from the originals avoids rounding drift.
 class ScaleManager:
-    """Remembers and scales sizes."""
-
     def __init__(self):
-        """Start empty."""
-        self.widgets = []     # (widget, minW, minH, maxW, maxH)
-        self.icons = []       # (button, iconW, iconH)
-        self.layouts = []     # (layout, (l, t, r, b), spacing)
-        self.spacers = []     # (layout, spacer, w, h, hPolicy, vPolicy)
+        self.widgets = []
+        self.icons = []
+        self.layouts = []
+        self.spacers = []
 
     def capture(self, root):
-        """Record the normal sizes."""
         for w in [root] + root.findChildren(QWidget):
             self.widgets.append((w, w.minimumWidth(), w.minimumHeight(),
                                  w.maximumWidth(), w.maximumHeight()))
@@ -67,9 +73,7 @@ class ScaleManager:
                                          policy.horizontalPolicy(), policy.verticalPolicy()))
 
     def apply(self, scale):
-        """Apply a scale."""
         def s(n):
-            """Scale a number."""
             return round(n * scale)
 
         for w, min_w, min_h, max_w, max_h in self.widgets:
@@ -77,7 +81,8 @@ class ScaleManager:
                 w.setMinimumSize(s(min_w), s(min_h))
                 w.setMaximumSize(max_w if max_w >= MAX_SIZE else s(max_w),
                                  max_h if max_h >= MAX_SIZE else s(max_h))
-            except RuntimeError:          # widget was deleted
+            # The widget may have been deleted since it was captured; skip it.
+            except RuntimeError:
                 pass
         for button, icon_w, icon_h in self.icons:
             try:
@@ -99,20 +104,17 @@ class ScaleManager:
                 pass
 
 
+# Base class for the login window and dashboard. The page sits in a scroll area, so on a
+# screen smaller than the minimum size you can scroll instead of losing part of the page.
 class ScalingWindow(QWidget):
-    """Window whose content grows with it."""
-
-    BASE_SIZE = (1000, 660)          # the size the screen was designed at
+    BASE_SIZE = (1000, 660)
 
     def __init__(self):
-        """Set up the scroll area and timer."""
         super().__init__()
         self.scale = None
         self.scaler = ScaleManager()
 
         self.content = QWidget()
-        # We size the content ourselves (fit_content) instead of letting the scroll
-        # area do it: word-wrapped labels make Qt over-estimate the height needed.
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(False)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -121,47 +123,47 @@ class ScalingWindow(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.scroll)
 
-        self.rescale_timer = QTimer(self)        # wait until resizing pauses
+        # Resizing fires many events; rescale once, 60 ms after the last one.
+        self.rescale_timer = QTimer(self)
         self.rescale_timer.setSingleShot(True)
         self.rescale_timer.setInterval(60)
         self.rescale_timer.timeout.connect(self.update_scale)
-        connect_alive(theme_events.changed, self, lambda _t: self.setStyleSheet(build_style(self.scale or 1.0)))
+        connect_alive(theme_events.changed, self,
+                      lambda _t: self.setStyleSheet(build_style(self.scale or 1.0)))
 
+    # Pages call this after building all their widgets, so every size is captured at 1.0.
     def finish_scaling(self):
-        """Record sizes, apply the scale."""
         self.scaler.capture(self.content)
         self.update_scale(force=True)
 
     def showEvent(self, event):
-        """Use this window's scale."""
         super().showEvent(event)
         self.fit_content()
         if self.scale is not None and self.scale != _current["scale"]:
-            _current["scale"] = self.scale          # this window's size is the one in use
+            _current["scale"] = self.scale
             scale_events.changed.emit(self.scale)
 
     def resizeEvent(self, event):
-        """Rescale after resizing."""
         super().resizeEvent(event)
         self.fit_content()
         self.rescale_timer.start()
 
+    # Make the page fill the window, but never shrink below its minimum size (the scroll bars
+    # appear instead). Done twice because showing a scroll bar changes the free space.
     def fit_content(self):
-        """Fit the content to the window."""
         minimum = self.content.minimumSizeHint()
-        for _ in range(2):            # twice: showing/hiding a scroll bar changes the room
+        for _ in range(2):
             room = self.scroll.viewport().size()
             self.content.resize(max(room.width(), minimum.width()),
                                 max(room.height(), minimum.height()))
 
     def update_scale(self, force=False):
-        """Restyle at the new scale."""
         new_scale = scale_for(self.width(), self.height(), *self.BASE_SIZE)
         if new_scale == self.scale and not force:
             return
         self.scale = new_scale
-        self.setStyleSheet(build_style(new_scale))    # fonts, paddings, borders
-        self.scaler.apply(new_scale)                   # fixed sizes and spacing
+        self.setStyleSheet(build_style(new_scale))
+        self.scaler.apply(new_scale)
         self.content.layout().activate()
         self.fit_content()
         _current["scale"] = new_scale
