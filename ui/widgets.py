@@ -3,7 +3,6 @@ white-bordered boxes, red/white buttons, field labels, status messages, the
 settings gear icon, image slots and the live clock.
 """
 
-from pathlib import Path
 
 from datetime import datetime
 
@@ -11,10 +10,10 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap, QTransform
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QSizePolicy, QToolButton
 
+from app_paths import IMAGES_DIR
 from ui.theme import colors, current_theme, theme_events
 from ui.signals import connect_alive
 
-IMAGES_DIR = Path(__file__).resolve().parent.parent / "assets" / "images"
 
 
 # A white-bordered box; its look comes from QFrame#box in styles.py.

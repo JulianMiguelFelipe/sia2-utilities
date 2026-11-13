@@ -7,15 +7,15 @@ deleting a user deletes all of their data with it.
 """
 
 import sqlite3
-from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+from app_paths import DATA_DIR
+
+# data/app.db when run from source, %APPDATA%\JD UTILS\app.db in the packaged .exe.
 DB_PATH = DATA_DIR / "app.db"
 
 
 def get_connection():
-    DATA_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     # Lets code read columns by name, e.g. row["username"].
     conn.row_factory = sqlite3.Row

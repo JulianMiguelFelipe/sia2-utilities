@@ -25,6 +25,8 @@ SMS_MAX_LENGTH = 1600
 # SMSGate has used two API paths over its versions. We try the older local path
 # first, then the newer one, and remember whichever the phone answers.
 SMSGATE_PATHS = ["/message", "/3rdparty/v1/messages"]
+# SMSGate's public cloud server. It only speaks HTTPS and uses the /3rdparty/v1 paths.
+CLOUD_HOST = "api.sms-gate.app"
 # (seconds to connect, seconds to wait for the reply)
 SMSGATE_TIMEOUT = (5, 15)
 
@@ -128,11 +130,16 @@ class SmsGateConfig:
     username: str
     password: str
     path: str = SMSGATE_PATHS[0]
+    cloud: bool = False
 
 
-# Builds http://IP:PORT. Also accepts "192.168.1.5:8080" typed in the IP box.
+# Builds http(s)://HOST:PORT. Also accepts "192.168.1.5:8080" typed in the IP box.
+# HTTPS is used when typed, on port 443, or for the cloud server; sending plain HTTP
+# to an HTTPS port makes the server answer every request with a 400 error.
 def build_base_url(ip_text, port_text):
-    host = re.sub(r"^https?://", "", ip_text.strip(), flags=re.IGNORECASE).rstrip("/")
+    text = ip_text.strip()
+    secure = text.lower().startswith("https://")
+    host = re.sub(r"^https?://", "", text, flags=re.IGNORECASE).split("/")[0]
     port = port_text.strip()
     if ":" in host:
         host, port = host.split(":", 1)
@@ -140,6 +147,8 @@ def build_base_url(ip_text, port_text):
         raise MessagingError("Enter the phone's IP address, like 192.168.43.1.")
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise MessagingError("The port should be a number, usually 8080.")
+    if secure or port == "443" or host.lower() == CLOUD_HOST:
+        return f"https://{host}:{port}"
     return f"http://{host}:{port}"
 
 
@@ -189,21 +198,27 @@ def _is_json(response):
     return "json" in response.headers.get("Content-Type", "")
 
 
-# CONNECT for SMS: first check the phone answers at all (/health), then ask for a
-# message that doesn't exist. 401 means a wrong login; any other answer tells us
-# which API path this SMSGate version uses.
+# CONNECT for SMS: first check the server answers at all (/health), then ask for a
+# message that doesn't exist. 401 means a wrong login, a non-JSON 400 means the
+# address is wrong (usually http vs https), and any other answer tells us which API
+# path this SMSGate version uses. The cloud server is tried with its own path first.
 def connect_smsgate(ip_text, port_text, username, password):
-    config = SmsGateConfig(build_base_url(ip_text, port_text),
-                           username.strip(), password.strip())
+    base_url = build_base_url(ip_text, port_text)
+    cloud = CLOUD_HOST in base_url.lower()
+    paths = list(reversed(SMSGATE_PATHS)) if cloud else SMSGATE_PATHS
+    config = SmsGateConfig(base_url, username.strip(), password.strip(), paths[0], cloud)
     if not config.username or not config.password:
         raise MessagingError("Enter the SMSGate username and password.")
 
     _smsgate_request("GET", config.base_url + "/health", config)
 
-    for path in SMSGATE_PATHS:
+    for path in paths:
         response = _smsgate_request("GET", f"{config.base_url}{path}/jdutils-test", config)
         if response.status_code == 401:
             raise MessagingError("Wrong SMSGate username or password.")
+        if response.status_code == 400 and not _is_json(response):
+            raise MessagingError("The server didn't understand the request. Check the address: "
+                                 "the cloud server is https://api.sms-gate.app with port 443.")
         if response.status_code != 404 or _is_json(response):
             return replace(config, path=path)
     return config

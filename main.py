@@ -7,7 +7,10 @@ and swaps back on logout.
 
 import sys
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
+
+from app_paths import ICON_PATH
 
 from database.db import init_db
 from ui.dashboard import Dashboard
@@ -51,9 +54,10 @@ class App:
 
 
 def main():
-    # Create data/app.db and any missing tables before anything reads from it.
+    # Create the database and any missing tables before anything reads from it.
     init_db()
     qt_app = QApplication(sys.argv)
+    qt_app.setWindowIcon(QIcon(str(ICON_PATH)))
     set_theme(get_setting("theme", "dark"), save=False)
     app = App()
     app.start()

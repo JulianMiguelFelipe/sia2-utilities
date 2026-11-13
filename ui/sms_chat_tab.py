@@ -398,7 +398,9 @@ class SmsChatTab(QWidget):
     # Start or stop checking the phone's inbox when SMS connects or disconnects.
     def connection_changed(self):
         if self.conn.smsgate:
-            self.inbox_unsupported = False
+            # The cloud server has no inbox endpoint (only webhooks to a public server),
+            # so replies can't be shown; sending and status tracking still work.
+            self.inbox_unsupported = self.conn.smsgate.cloud
             self.inbox_timer.start()
             self.check_inbox()
         else:
@@ -408,6 +410,9 @@ class SmsChatTab(QWidget):
     def show_listening_status(self):
         if not self.conn.smsgate:
             set_status(self.status, "SMS isn't connected. Connect it in COMPOSE to send and receive.")
+        elif self.inbox_unsupported and self.conn.smsgate.cloud:
+            set_status(self.status, "Cloud server: texts send and show their status, but replies "
+                                    "only appear with SMSGate's Local Server.")
         elif self.inbox_unsupported:
             set_status(self.status, "This SMSGate version can't share replies. Update the SMSGate app.")
         else:

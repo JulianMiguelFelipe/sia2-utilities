@@ -14,3 +14,9 @@ __pycache__/
 
 # Editor
 .vscode/
+
+# Build output (build.bat and installer.iss)
+build/
+dist/
+installer/
+*.spec

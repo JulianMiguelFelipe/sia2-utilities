@@ -124,8 +124,8 @@ class ComposeTab(QWidget):
         self.gmail_box.show_error(friendly(err))
 
     def build_smsgate_box(self):
-        self.sms_box = ConnectionBox("SMS", "Phone IP, port and login from the SMSGate app")
-        self.sms_ip = make_input("Phone IP, e.g. 192.168.43.1")
+        self.sms_box = ConnectionBox("SMS", "Phone IP and port, or api.sms-gate.app and 443 for cloud")
+        self.sms_ip = make_input("Phone IP or api.sms-gate.app")
         self.sms_port = make_input("Port")
         self.sms_port.setText("8080")
         self.sms_port.setFixedWidth(72)
