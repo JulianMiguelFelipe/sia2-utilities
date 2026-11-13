@@ -9,6 +9,7 @@ messages table with a status: queued, sent, delivered or failed.
 """
 
 import re
+from datetime import datetime, timedelta, timezone
 import smtplib
 from dataclasses import dataclass, replace
 from email.message import EmailMessage
@@ -257,10 +258,29 @@ def get_sms_status(config, gateway_id):
 SMSGATE_INBOX_PATHS = ["/inbox", "/3rdparty/v1/inbox"]
 
 
+# Asks SMSGate to re-read the phone's own SMS storage, so texts its listener missed
+# show up in /inbox. webhookDelivery "Disabled" saves them without sending webhooks.
+# Older SMSGate versions don't have this endpoint; that's fine, we just skip it.
+def refresh_sms_inbox(config, since_utc_iso, until_utc_iso):
+    body = {"since": since_utc_iso, "until": until_utc_iso, "webhookDelivery": "Disabled"}
+    for path in ("/inbox/refresh", "/3rdparty/v1/inbox/refresh"):
+        try:
+            response = _smsgate_request("POST", config.base_url + path, config, json=body)
+        except MessagingError:
+            return
+        if response.status_code not in (404, 405):
+            return
+
+
 # Received texts since the given time, in one simple format, whichever SMSGate
 # version answered (the field names differ between versions).
-def get_sms_inbox(config, since_utc_iso):
-    params = {"type": "SMS", "from": since_utc_iso, "limit": 200}
+# "to" is set two days ahead on purpose: some carriers stamp texts with the wrong time
+# zone (8 hours ahead here), and SMSGate leaves those "future" texts out unless asked.
+def get_sms_inbox(config, since_utc_iso, refresh=False):
+    until = (datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if refresh:
+        refresh_sms_inbox(config, since_utc_iso, until)
+    params = {"type": "SMS", "from": since_utc_iso, "to": until, "limit": 500}
     for path in SMSGATE_INBOX_PATHS:
         response = _smsgate_request("GET", config.base_url + path, config, params=params)
         if response.status_code in (404, 405):
@@ -331,6 +351,59 @@ def get_messages(user_id):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# Short reason for a failed message, shown as "FAILED · network error". The first
+# match wins, so specific phone/carrier codes come before the general app messages.
+FAILURE_REASONS = [
+    ("RIL_NETWORK", "network error"), ("NETWORK_ERR", "network error"),
+    ("NO_SERVICE", "no signal"), ("RADIO_OFF", "airplane mode"),
+    ("LIMIT_EXCEEDED", "carrier sending limit"), ("SHORT_CODE", "short code blocked"),
+    ("FDN", "blocked by SIM"), ("NULL_PDU", "message error"), ("ENCODING", "message error"),
+    ("GENERIC_FAILURE", "carrier refused"), ("NOT REACHABLE", "phone not reachable"),
+    ("TOOK TOO LONG", "phone not responding"), ("USERNAME OR PASSWORD", "wrong SMSGate login"),
+    ("REJECTED THE MESSAGE", "rejected by SMSGate"), ("REFUSED THAT RECIPIENT", "address refused"),
+    ("GMAIL", "Gmail error"), ("INTERNET", "no internet"),
+]
+
+
+def failure_reason(error):
+    if not error:
+        return ""
+    text = error.upper()
+    for needle, reason in FAILURE_REASONS:
+        if needle in text:
+            return reason
+    return "send error"
+
+
+# Characters that fit the normal 7-bit SMS alphabet (GSM 03.38). One emoji or other
+# character outside it switches the whole text to Unicode, which fits far less per SMS.
+GSM_CHARS = set("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?"
+                "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà")
+GSM_EXTENDED = set("^{}\\[~]|€")
+
+
+# How many SMS a text is billed as. One SMS holds 160 normal characters (or 70 Unicode);
+# longer texts are split into parts of 153 (or 67), because each part needs a small header.
+def sms_parts(text):
+    if not text:
+        return 0, False
+    unicode = any(ch not in GSM_CHARS and ch not in GSM_EXTENDED for ch in text)
+    if unicode:
+        # Unicode SMS count UTF-16 units, so an emoji takes 2 of the 70.
+        length, single, part = len(text.encode("utf-16-le")) // 2, 70, 67
+    else:
+        length, single, part = len(text) + sum(ch in GSM_EXTENDED for ch in text), 160, 153
+    return (1 if length <= single else -(-length // part)), unicode
+
+
+# "45 chars · 1 SMS" for the counters. Unicode is flagged because it fits fewer
+# characters, which is often why a short text with an emoji costs 2 SMS.
+def sms_counter_text(text):
+    parts, unicode = sms_parts(text)
+    label = f"{len(text)} chars · {parts} SMS"
+    return label + " · Unicode" if unicode else label
 
 
 def delete_messages(user_id, message_ids):

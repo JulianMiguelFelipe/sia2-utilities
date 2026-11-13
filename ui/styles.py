@@ -117,8 +117,12 @@ QTableCornerButton::section {{ background-color: {BG}; border: none; }}
 
 /* ----- Scrollbars ----- */
 QScrollBar:vertical, QScrollBar:horizontal {{ background: {BG}; border: none; }}
-QScrollBar:vertical   {{ width: {s(10)}px; }}
-QScrollBar:horizontal {{ height: {s(10)}px; }}
+/* Scrollbars are hidden everywhere (the mouse wheel still scrolls), except on the
+   HISTORY tables and the LAST GENERATED panel, where they stay visible. */
+QScrollBar:vertical   {{ width: 0px; }}
+QScrollBar:horizontal {{ height: 0px; }}
+QTableWidget QScrollBar:vertical, QTextBrowser#lastData QScrollBar:vertical {{ width: {s(10)}px; }}
+QTableWidget QScrollBar:horizontal, QTextBrowser#lastData QScrollBar:horizontal {{ height: {s(10)}px; }}
 QScrollBar::handle {{
     background: {c['faint']};
     border-radius: {s(5)}px;

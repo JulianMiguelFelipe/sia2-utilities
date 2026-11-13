@@ -9,20 +9,24 @@ the theme and window scale.
 
 import html
 import re
+from urllib.parse import quote
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFontMetrics
+from PySide6.QtGui import QAction, QCursor, QFontMetrics, QIcon
 from PySide6.QtWidgets import (
-    QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
-    QTextBrowser, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu,
+    QMessageBox, QSystemTrayIcon, QTextBrowser, QToolTip, QVBoxLayout, QWidget,
 )
 
+from app_paths import ICON_PATH
 from services.messaging_service import (
-    SMS_MAX_LENGTH, get_sms_inbox, log_message, normalize_phone, send_sms,
+    SMS_MAX_LENGTH, delete_messages, failure_reason, get_sms_inbox, log_message,
+    normalize_phone, send_sms, sms_counter_text,
 )
 from services.sms_chat_service import (
-    delete_conversation, ensure_contact, everyone_since_utc, first_sent_times, get_thread,
-    inbox_since_utc, list_conversations, mark_read, rename_contact, save_incoming,
+    delete_conversation, delete_received, ensure_contact, everyone_since_utc,
+    first_sent_times, get_thread, inbox_since_utc, list_conversations, mark_read,
+    rename_contact, save_incoming,
 )
 from ui.messaging_shared import friendly, friendly_time, make_input
 from ui.scaling import current_scale, scale_events
@@ -32,6 +36,8 @@ from ui.workers import run_in_background
 from ui.signals import connect_alive
 
 INBOX_CHECK_MS = 5000
+# Every 12th check (about once a minute) also asks SMSGate to re-read the phone's SMS.
+REFRESH_EVERY = 12
 
 
 def _short(text, limit=34):
@@ -41,6 +47,8 @@ def _short(text, limit=34):
 
 class SmsChatTab(QWidget):
     unread_changed = Signal(int)
+    # Asks the dashboard to bring this tab to the front (clicking a notification).
+    show_requested = Signal()
 
     def __init__(self, user, connections, tracker):
         super().__init__()
@@ -49,12 +57,19 @@ class SmsChatTab(QWidget):
         self.tracker = tracker
         self.current = None
         self.checking_inbox = False
+        self.inbox_checks = 0
+        self.inbox_error = ""
         self.inbox_unsupported = False
         self.sending = False
         # Texts from numbers outside JD UTILS. Kept in memory only, never saved.
         self.outside = {}
         self.seen_outside = set()
         self.hidden = set()
+        self.hidden_keys = set()
+        # href of every bubble in the open chat -> its message, for right-click and RESEND.
+        self.bubbles = {}
+        self.tray = None
+        self.notified_phone = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -212,8 +227,14 @@ class SmsChatTab(QWidget):
         header_box = QWidget(objectName="chatHeader")
         header_box.setLayout(header)
 
+        # Every bubble is a link (msg:...) so a right-click can tell which message it is.
+        # setOpenLinks(False): clicks come to link_clicked instead of opening anything.
         self.view = QTextBrowser(objectName="chatView")
         self.view.setOpenLinks(False)
+        self.view.anchorClicked.connect(self.link_clicked)
+        self.view.highlighted.connect(self.link_hovered)
+        self.view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(self.message_menu)
 
         self.message = make_input("Type a message... (Enter to send)")
         self.message.setFixedHeight(34)
@@ -229,7 +250,7 @@ class SmsChatTab(QWidget):
 
         self.status = QLabel("", objectName="hint")
         self.status.setWordWrap(True)
-        self.counter = QLabel(f"0 / {SMS_MAX_LENGTH}", objectName="hint")
+        self.counter = QLabel(sms_counter_text(""), objectName="hint")
         footer = QHBoxLayout()
         footer.addWidget(self.status, stretch=1)
         footer.addWidget(self.counter, alignment=Qt.AlignTop)
@@ -301,6 +322,7 @@ class SmsChatTab(QWidget):
         s, p = current_scale(), colors()
         body, small, pad = round(13 * s), round(10.5 * s), round(8 * s)
         parts, last_day = [], None
+        self.bubbles = {}
         for t in texts:
             day = t["at"][:10]
             if day != last_day:
@@ -309,12 +331,27 @@ class SmsChatTab(QWidget):
                 parts.append(f"<p align='center' style='color:{p['muted']}; font-size:{small}px;"
                              f" font-weight:800'>{label}</p>")
                 last_day = day
-            text = html.escape(t["body"]).replace("\n", "<br>")
             time = friendly_time(t["at"])
             time = time if ":" in time else t["at"][11:16]
             if t["mine"]:
+                href = f"msg:sent:{t['id']}"
+            elif t.get("outside"):
+                href = f"msg:out:{quote(t['key'], safe='')}"
+            else:
+                href = f"msg:recv:{t['id']}"
+            self.bubbles[href] = t
+            fg = p["alt_fg"] if t["mine"] else p["fg"]
+            text = (f"<a href='{href}' style='color:{fg}; text-decoration:none'>"
+                    f"{html.escape(t['body']).replace(chr(10), '<br>')}</a>")
+            if t["mine"]:
                 color = status_color(t["status"])
                 meta = f"{t['status'].upper()} · {time}"
+                # Failed texts say why, and get a RESEND link that sends the same text again.
+                if t["status"] == "failed":
+                    reason = failure_reason(t.get("error"))
+                    meta = f"FAILED · {reason} · {time}" if reason else meta
+                    meta += (f" &nbsp;<a href='resend:{t['id']}' style='color:{p['fg']};"
+                             f" text-decoration:underline'>RESEND</a>")
                 parts.append(
                     f"<table align='right' cellspacing='0' cellpadding='{pad}' "
                     f"style='margin-left:{round(80 * s)}px' bgcolor='{p['alt_bg']}'>"
@@ -332,28 +369,80 @@ class SmsChatTab(QWidget):
         return "".join(parts)
 
     def update_counter(self):
-        self.counter.setText(f"{len(self.message.text())} / {SMS_MAX_LENGTH}")
+        self.counter.setText(sms_counter_text(self.message.text()))
 
     # Replying from the chat uses the same send_sms and status tracker as COMPOSE.
     def send(self):
         body = self.message.text().strip()
-        if not self.current or not body or self.sending:
+        if body:
+            self.start_send(self.current, body, from_input=True)
+
+    # self.sending blocks a second send until the first one answers, so pressing SEND
+    # (or Enter, or RESEND) twice never sends a duplicate.
+    def start_send(self, phone, body, from_input=False):
+        if not phone or self.sending:
             return
         if not self.conn.smsgate:
             return set_status(self.status, "Connect SMS in COMPOSE first.")
         self.sending = True
         self.send_btn.setText("SENDING...")
         self.refresh_chat()
-        phone = self.current
         run_in_background(send_sms, self.conn.smsgate, phone, body,
-                          on_done=lambda result: self.sent(phone, body, result),
+                          on_done=lambda result: self.sent(phone, body, result, from_input),
                           on_error=lambda err: self.send_failed(phone, body, err))
+
+    # RESEND: the failed copy is removed and the same text is sent again as a new message,
+    # so the chat doesn't show it twice.
+    def resend(self, message_id):
+        t = self.bubbles.get(f"msg:sent:{message_id}")
+        if not t or self.sending:
+            return
+        if not self.conn.smsgate:
+            return set_status(self.status, "Connect SMS in COMPOSE first.")
+        delete_messages(self.user["id"], [t["id"]])
+        self.start_send(t["phone"], t["body"])
+
+    def link_clicked(self, url):
+        if url.scheme() == "resend":
+            self.resend(int(url.path()))
+
+    # Hovering a failed text shows the full error from the phone or SMSGate.
+    def link_hovered(self, url):
+        t = self.bubbles.get(url.toString() if hasattr(url, "toString") else url)
+        if t and t.get("status") == "failed" and t.get("error"):
+            QToolTip.showText(QCursor.pos(), t["error"], self.view)
+
+    # Right-click a bubble: COPY TEXT or DELETE just that message.
+    def message_menu(self, pos):
+        t = self.bubbles.get(self.view.anchorAt(pos))
+        if not t:
+            return
+        menu = QMenu(self)
+        copy_action = menu.addAction("COPY TEXT")
+        delete_action = menu.addAction("DELETE MESSAGE")
+        chosen = menu.exec(self.view.viewport().mapToGlobal(pos))
+        if chosen == copy_action:
+            QApplication.clipboard().setText(t["body"])
+            set_status(self.status, "Copied the message.", success=True)
+        elif chosen == delete_action:
+            self.delete_message(t)
+
+    def delete_message(self, t):
+        if t["mine"]:
+            self.tracker.forget([t["id"]])
+            delete_messages(self.user["id"], [t["id"]])
+        elif t.get("outside"):
+            self.hidden_keys.add(t["key"])
+            self.outside.pop(t["key"], None)
+        else:
+            delete_received(self.user["id"], t["id"])
+        self.refresh()
 
     def finish_sending(self):
         self.sending = False
         self.send_btn.setText("SEND")
 
-    def sent(self, phone, body, result):
+    def sent(self, phone, body, result, from_input=False):
         gateway_id, status, error, config = result
         if self.conn.smsgate:
             self.conn.smsgate = config
@@ -361,7 +450,8 @@ class SmsChatTab(QWidget):
         if status == "queued" and gateway_id:
             self.tracker.track(row_id, gateway_id)
         self.finish_sending()
-        self.message.clear()
+        if from_input:
+            self.message.clear()
         self.show_listening_status()
         self.refresh()
         self.message.setFocus()
@@ -398,6 +488,8 @@ class SmsChatTab(QWidget):
     # Start or stop checking the phone's inbox when SMS connects or disconnects.
     def connection_changed(self):
         if self.conn.smsgate:
+            self.inbox_checks = 0
+            self.inbox_error = ""
             # The cloud server has no inbox endpoint (only webhooks to a public server),
             # so replies can't be shown; sending and status tracking still work.
             self.inbox_unsupported = self.conn.smsgate.cloud
@@ -415,6 +507,8 @@ class SmsChatTab(QWidget):
                                     "only appear with SMSGate's Local Server.")
         elif self.inbox_unsupported:
             set_status(self.status, "This SMSGate version can't share replies. Update the SMSGate app.")
+        elif self.inbox_error:
+            set_status(self.status, f"Couldn't check for replies: {self.inbox_error}")
         else:
             self.status.setObjectName("hint")
             self.status.style().polish(self.status)
@@ -436,16 +530,20 @@ class SmsChatTab(QWidget):
             return
         since = everyone_since_utc(first_sent) if show_all else inbox_since_utc(first_sent)
         self.checking_inbox = True
-        run_in_background(get_sms_inbox, self.conn.smsgate, since,
+        refresh = self.inbox_checks % REFRESH_EVERY == 0
+        self.inbox_checks += 1
+        run_in_background(get_sms_inbox, self.conn.smsgate, since, refresh,
                           on_done=lambda texts: self.inbox_received(texts, first_sent),
                           on_error=self.inbox_failed)
 
     def inbox_received(self, texts, first_sent):
         self.checking_inbox = False
-        new, others = save_incoming(self.user["id"], texts, first_sent)
+        self.inbox_error = ""
+        new, others, fresh = save_incoming(self.user["id"], texts, first_sent)
         if not self.only_ours.isChecked():
             for t in others:
-                if t["phone"] not in self.hidden and t["key"] not in self.outside:
+                if (t["phone"] not in self.hidden and t["key"] not in self.outside
+                        and t["key"] not in self.hidden_keys):
                     self.outside[t["key"]] = t
                     new += 1
                     if t["phone"] == self.current and self.isVisible():
@@ -454,12 +552,39 @@ class SmsChatTab(QWidget):
             if self.current and self.isVisible():
                 mark_read(self.user["id"], self.current)
             self.refresh()
+        if fresh:
+            self.notify(fresh)
         self.show_listening_status()
+
+    # Desktop notification for new replies, only when you aren't already looking at SMS
+    # CHAT. Clicking it brings the app to the front with that conversation open.
+    def notify(self, fresh):
+        if (self.isVisible() and self.window().isActiveWindow()) or \
+                not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        if self.tray is None:
+            self.tray = QSystemTrayIcon(QIcon(str(ICON_PATH)), self)
+            self.tray.setToolTip("JD UTILS")
+            self.tray.messageClicked.connect(self.open_notified)
+            self.tray.show()
+        latest = fresh[-1]
+        name = next((c["name"] for c in self.conversations() if c["phone"] == latest["phone"]), None)
+        more = f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""
+        self.notified_phone = latest["phone"]
+        self.tray.showMessage(f"New text from {name or latest['phone']}{more}",
+                              latest["body"][:120], QIcon(str(ICON_PATH)), 6000)
+
+    def open_notified(self):
+        if self.notified_phone:
+            self.current = self.notified_phone
+        self.show_requested.emit()
+        self.refresh()
 
     def filter_changed(self, only_ours):
         self.outside.clear()
         self.seen_outside.clear()
         self.hidden.clear()
+        self.hidden_keys.clear()
         if only_ours and self.current and not normalize_phone(self.current):
             self.current = None
         self.show_listening_status()
@@ -471,6 +596,8 @@ class SmsChatTab(QWidget):
         self.checking_inbox = False
         if "can't share received texts" in friendly(err):
             self.inbox_unsupported = True
+        else:
+            self.inbox_error = friendly(err)
         self.show_listening_status()
 
     # Coming back to this tab counts as reading the open chat.
@@ -483,6 +610,8 @@ class SmsChatTab(QWidget):
     # Logout: stop checking and drop everything held in memory.
     def clear_credentials(self):
         self.inbox_timer.stop()
+        if self.tray is not None:
+            self.tray.hide()
         self.outside.clear()
         self.only_ours.setChecked(True)
         self.current = None

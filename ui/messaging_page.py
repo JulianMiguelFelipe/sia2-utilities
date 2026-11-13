@@ -6,7 +6,7 @@ and one SmsStatusTracker, so connecting once in COMPOSE works in every tab. The
 bar on top shows unread badges and an EMAIL / SMS status dot.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -19,6 +19,8 @@ from ui.sms_chat_tab import SmsChatTab
 
 
 class MessagingPage(QWidget):
+    # Passed up to the dashboard so a notification click can show this page.
+    show_requested = Signal()
     def __init__(self, user):
         super().__init__()
         self.user = user
@@ -68,6 +70,7 @@ class MessagingPage(QWidget):
         bar_widget.setLayout(bar)
 
         self.chat.unread_changed.connect(lambda n: self.set_badge(self.chat, n))
+        self.chat.show_requested.connect(self.show_chat)
         self.inbox.unread_changed.connect(lambda n: self.set_badge(self.inbox, n))
         # Whenever a login changes, update the status dots and pick up unfinished texts.
         self.conn.changed.connect(self.update_dots)
@@ -104,6 +107,11 @@ class MessagingPage(QWidget):
 
     # Logout: stop tracking and forget the logins held in memory. Saved logins stay in
     # the database and reconnect at the next login.
+    def show_chat(self):
+        self.stack.setCurrentWidget(self.chat)
+        self.tabs.button(1).setChecked(True)
+        self.show_requested.emit()
+
     def clear_credentials(self):
         self.tracker.stop()
         self.compose.clear_credentials()

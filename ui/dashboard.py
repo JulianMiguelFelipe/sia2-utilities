@@ -60,6 +60,7 @@ class Dashboard(ScalingWindow):
             self.tabs.addButton(tab, index)
             nav_layout.addWidget(tab)
         self.tabs.button(0).setChecked(True)
+        self.pages[2].show_requested.connect(self.show_messaging)
 
         nav_layout.addStretch()
         nav_layout.addWidget(ClockLabel())
@@ -79,6 +80,15 @@ class Dashboard(ScalingWindow):
         self.finish_scaling()
 
     # Called on logout: each page forgets anything it holds in memory.
+    # A notification was clicked: show SMS & EMAIL and bring the window to the front.
+    def show_messaging(self):
+        self.stack.setCurrentIndex(2)
+        self.tabs.button(2).setChecked(True)
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def clear_session(self):
         for page in self.pages:
             if hasattr(page, "clear_credentials"):

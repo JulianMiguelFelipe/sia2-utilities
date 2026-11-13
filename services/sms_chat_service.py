@@ -56,12 +56,16 @@ def inbox_since_utc(first_sent):
 # only shown in memory when the user turns off the "only people I texted" filter.
 def save_incoming(user_id, texts, first_sent):
     conn = get_connection()
-    new, others = 0, []
+    new, others, fresh = 0, [], []
     for t in texts:
         phone = normalize_phone(t["sender"])
         received_at = parse_phone_time(t["created_at"])
         if not received_at:
             continue
+        # A time more than 5 minutes in the future is a carrier time-zone mistake. We check
+        # every 5 seconds, so "now" (when JD UTILS first saw it) is the real arrival time.
+        if received_at > (datetime.now() + timedelta(minutes=5)).strftime(TIME_FORMAT):
+            received_at = now_local()
         # A text's own id + sender + time. The UNIQUE key in sms_inbox ignores repeats, so
         # asking the phone every 5 seconds never saves the same text twice.
         key = f"{t['id']}|{phone or t['sender']}|{t['created_at']}"
@@ -76,9 +80,12 @@ def save_incoming(user_id, texts, first_sent):
             (user_id, phone, t["text"], received_at, key),
         )
         new += cur.rowcount
+        if cur.rowcount:
+            fresh.append({"phone": phone, "body": t["text"]})
     conn.commit()
     conn.close()
-    return new, others
+    # fresh = replies saved just now, used for the desktop notification.
+    return new, others, fresh
 
 
 # For "show everyone": the last 7 days (or since the first text, if that's earlier).
@@ -174,6 +181,13 @@ def mark_read(user_id, phone):
 
 
 # Removes the conversation from JD UTILS only; the texts stay on the phone.
+def delete_received(user_id, inbox_id):
+    conn = get_connection()
+    conn.execute("DELETE FROM sms_inbox WHERE id = ? AND user_id = ?", (inbox_id, user_id))
+    conn.commit()
+    conn.close()
+
+
 def delete_conversation(user_id, phone):
     conn = get_connection()
     conn.execute("DELETE FROM sms_inbox WHERE user_id = ? AND phone = ?", (user_id, phone))

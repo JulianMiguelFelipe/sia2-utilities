@@ -18,8 +18,9 @@ from services.saved_logins_service import (
     forget_gmail, forget_smsgate, load_logins, save_gmail, save_smsgate,
 )
 from services.messaging_service import (
-    SMS_MAX_LENGTH, clear_messages, connect_gmail, connect_smsgate, delete_messages,
-    detect_type, get_messages, log_message, normalize_phone, send_email, send_sms,
+    clear_messages, connect_gmail, connect_smsgate, delete_messages,
+    detect_type, failure_reason, get_messages, log_message, normalize_phone, send_email,
+    send_sms, sms_counter_text,
 )
 from ui.theme import colors, status_color, theme_events
 from ui.messaging_shared import ConnectionBox, friendly, make_input
@@ -45,10 +46,6 @@ class ComposeTab(QWidget):
         left.setSpacing(10)
         left.addWidget(self.build_gmail_box())
         left.addWidget(self.build_smsgate_box())
-        note = QLabel("Logins are saved to your account with encrypted passwords and reconnect "
-                      "when you log in. DISCONNECT forgets a saved login.", objectName="hint")
-        note.setWordWrap(True)
-        left.addWidget(note)
         left.addStretch()
         left_widget = QWidget()
         left_widget.setLayout(left)
@@ -62,7 +59,7 @@ class ComposeTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 10, 16, 8)
         layout.setSpacing(10)
-        layout.addLayout(top)
+        layout.addLayout(top, stretch=0)
         layout.addWidget(self.build_history_box(), stretch=1)
 
         self.refresh_history()
@@ -135,11 +132,16 @@ class ComposeTab(QWidget):
         address_row.addWidget(QLabel(":", objectName="fieldLabel"))
         address_row.addWidget(self.sms_port)
 
+        # Username and password share one row, like IP : port, so the SMS box is the same
+        # height as the EMAIL box and nothing gets squeezed.
         self.sms_user = make_input("Username")
         self.sms_password = make_input("Password", password=True)
+        login_row = QHBoxLayout()
+        login_row.setSpacing(8)
+        login_row.addWidget(self.sms_user, stretch=1)
+        login_row.addWidget(self.sms_password, stretch=1)
         self.sms_box.add_field(address_row, self.sms_ip, self.sms_port)
-        self.sms_box.add_field(self.sms_user, self.sms_user)
-        self.sms_box.add_field(self.sms_password, self.sms_password)
+        self.sms_box.add_field(login_row, self.sms_user, self.sms_password)
         self.sms_box.button.clicked.connect(self.toggle_smsgate)
         self.sms_password.returnPressed.connect(self.toggle_smsgate)
         return self.sms_box
@@ -243,7 +245,6 @@ class ComposeTab(QWidget):
         layout.addWidget(self.body)
         layout.addWidget(self.char_count, alignment=Qt.AlignRight)
         layout.addLayout(buttons)
-        layout.addStretch()
         return box
 
     # Live badge next to SEND TO: EMAIL, SMS, or ? while the recipient isn't valid yet.
@@ -263,7 +264,7 @@ class ComposeTab(QWidget):
     def update_char_count(self):
         count = len(self.body.toPlainText())
         if detect_type(self.recipient.text()) == "sms":
-            self.char_count.setText(f"{count} / {SMS_MAX_LENGTH}")
+            self.char_count.setText(sms_counter_text(self.body.toPlainText()))
         else:
             self.char_count.setText(f"{count} characters")
 
@@ -357,7 +358,8 @@ class ComposeTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setShowGrid(False)
-        self.table.setMinimumHeight(62)
+        # Room for the header and at least 4 messages at the default window size.
+        self.table.setMinimumHeight(150)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.Stretch)
@@ -392,8 +394,10 @@ class ComposeTab(QWidget):
             preview = msg["body"].replace("\n", " ")
             if msg["subject"]:
                 preview = f"[{msg['subject']}] {preview}"
-            values = [msg["sent_at"], msg["type"].upper(), msg["recipient"],
-                      preview, msg["status"].upper()]
+            status = msg["status"].upper()
+            if msg["status"] == "failed" and msg["error"]:
+                status += f" · {failure_reason(msg['error'])}"
+            values = [msg["sent_at"], msg["type"].upper(), msg["recipient"], preview, status]
             for c, value in enumerate(values):
                 # Each cell remembers its database id; the STATUS cell is colored by status.
                 item = QTableWidgetItem(value)
